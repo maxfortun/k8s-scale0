@@ -20,15 +20,20 @@ Add these to your Service:
 | `scale0.io/enabled` | Yes | Set to `"true"` to opt in |
 | `scale0.io/scale-in-after` | No | Seconds of inactivity before scale-down (default: 86400 / 1 day) |
 | `scale0.io/hpa` | No | HPA name (auto-discovered if not set) |
-| `scale0.io/virtualservice` | No | VirtualService name if different from service name |
+| `scale0.io/virtualservice` | No | VirtualService name(s), comma-separated (auto-discovered if not set) |
 
-### HPA Auto-Discovery
+### Auto-Discovery
 
 When `scale0.io/hpa` is not set, the controller auto-discovers the HPA:
+1. HPA with same name as the Service
+2. HPA whose `scaleTargetRef.name` matches the Service name
+3. HPA targeting a workload that matches the Service selector
 
-1. Look for HPA with same name as the Service
-2. Look for HPA whose `scaleTargetRef.name` matches the Service name
-3. Find workloads matching the Service selector, then find HPAs targeting them
+When `scale0.io/virtualservice` is not set, the controller auto-discovers all VirtualServices routing to the Service:
+1. Scans all VirtualServices in the namespace
+2. Matches any with a route destination pointing to the Service name
+
+Multiple VirtualServices are supported - all will be redirected on scale-down and restored on wake-up.
 
 ## Example
 

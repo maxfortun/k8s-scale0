@@ -51,9 +51,8 @@ export class Controller {
     const hpaLabelValue = labels[`${this.config.labelPrefix}/hpa`] ||
       annotations[`${this.config.labelPrefix}/hpa`];
 
-    const vsName = labels[`${this.config.labelPrefix}/virtualservice`] ||
-      annotations[`${this.config.labelPrefix}/virtualservice`] ||
-      name;
+    const vsLabelValue = labels[`${this.config.labelPrefix}/virtualservice`] ||
+      annotations[`${this.config.labelPrefix}/virtualservice`];
 
     // Auto-discover HPA if not explicitly specified
     let hpaName = hpaLabelValue;
@@ -65,6 +64,21 @@ export class Controller {
         console.log(`Auto-discovered HPA ${namespace}/${hpaName} for service ${name}`);
       } else {
         console.warn(`No HPA found for service ${namespace}/${name}, skipping`);
+        return;
+      }
+    }
+
+    // Auto-discover VirtualServices if not explicitly specified
+    let vsNames = [];
+    if (vsLabelValue) {
+      vsNames = vsLabelValue.split(',').map(s => s.trim());
+    } else {
+      const discoveredVsList = await this.k8s.findVirtualServicesForService(namespace, name);
+      if (discoveredVsList.length > 0) {
+        vsNames = discoveredVsList.map(vs => vs.metadata.name);
+        console.log(`Auto-discovered ${vsNames.length} VirtualService(s) for service ${name}: ${vsNames.join(', ')}`);
+      } else {
+        console.warn(`No VirtualService found for service ${namespace}/${name}, skipping`);
         return;
       }
     }
@@ -86,11 +100,11 @@ export class Controller {
 
     if (idleMs >= scaleInThresholdMs) {
       console.log(`Service ${namespace}/${name} idle for ${Math.round(idleMs / 1000)}s, scaling down...`);
-      await this.scaleDown(namespace, name, hpaName, vsName);
+      await this.scaleDown(namespace, name, hpaName, vsNames);
     }
   }
 
-  async scaleDown(namespace, serviceName, hpaName, vsName) {
+  async scaleDown(namespace, serviceName, hpaName, vsNames) {
     try {
       // Get current HPA state
       const hpa = await this.k8s.getHPA(namespace, hpaName);
@@ -99,10 +113,22 @@ export class Controller {
         return;
       }
 
-      // Get current VirtualService state
-      const vs = await this.k8s.getVirtualService(namespace, vsName);
-      if (!vs) {
-        console.warn(`VirtualService ${namespace}/${vsName} not found, skipping scale-down`);
+      // Get current VirtualService states
+      const virtualServices = [];
+      for (const vsName of vsNames) {
+        const vs = await this.k8s.getVirtualService(namespace, vsName);
+        if (vs) {
+          virtualServices.push({
+            name: vsName,
+            spec: JSON.parse(JSON.stringify(vs.spec)),
+          });
+        } else {
+          console.warn(`VirtualService ${namespace}/${vsName} not found, skipping`);
+        }
+      }
+
+      if (virtualServices.length === 0) {
+        console.warn(`No VirtualServices found for service ${namespace}/${serviceName}, skipping scale-down`);
         return;
       }
 
@@ -119,10 +145,7 @@ export class Controller {
           name: scaleTargetRef.name,
           apiVersion: scaleTargetRef.apiVersion,
         },
-        virtualService: {
-          name: vsName,
-          spec: JSON.parse(JSON.stringify(vs.spec)),
-        },
+        virtualServices,
       };
 
       // Scale HPA to 0
@@ -134,10 +157,15 @@ export class Controller {
       });
       console.log(`Scaled HPA ${namespace}/${hpaName} to 0`);
 
-      // Modify VirtualService to route to scale0
-      const modifiedVs = this.createScale0VirtualService(vs, serviceName);
-      await this.k8s.replaceVirtualService(namespace, vsName, modifiedVs);
-      console.log(`Redirected VirtualService ${namespace}/${vsName} to scale0`);
+      // Modify all VirtualServices to route to scale0
+      for (const vsState of virtualServices) {
+        const vs = await this.k8s.getVirtualService(namespace, vsState.name);
+        if (vs) {
+          const modifiedVs = this.createScale0VirtualService(vs, serviceName);
+          await this.k8s.replaceVirtualService(namespace, vsState.name, modifiedVs);
+          console.log(`Redirected VirtualService ${namespace}/${vsState.name} to scale0`);
+        }
+      }
 
       // Save state
       this.store.saveScaledDownState(namespace, serviceName, originalState);
@@ -197,12 +225,15 @@ export class Controller {
       });
       console.log(`Restored HPA ${namespace}/${state.hpa.name}`);
 
-      // Restore VirtualService
-      const currentVs = await this.k8s.getVirtualService(namespace, state.virtualService.name);
-      if (currentVs) {
-        currentVs.spec = state.virtualService.spec;
-        await this.k8s.replaceVirtualService(namespace, state.virtualService.name, currentVs);
-        console.log(`Restored VirtualService ${namespace}/${state.virtualService.name}`);
+      // Restore all VirtualServices
+      const virtualServices = state.virtualServices || (state.virtualService ? [state.virtualService] : []);
+      for (const vsState of virtualServices) {
+        const currentVs = await this.k8s.getVirtualService(namespace, vsState.name);
+        if (currentVs) {
+          currentVs.spec = vsState.spec;
+          await this.k8s.replaceVirtualService(namespace, vsState.name, currentVs);
+          console.log(`Restored VirtualService ${namespace}/${vsState.name}`);
+        }
       }
 
       // Update tracking

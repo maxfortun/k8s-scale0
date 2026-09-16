@@ -130,6 +130,41 @@ export class K8sClient {
     return body.items;
   }
 
+  async listVirtualServices(namespace) {
+    const { body } = await this.customApi.listNamespacedCustomObject({
+      group: 'networking.istio.io',
+      version: 'v1beta1',
+      namespace,
+      plural: 'virtualservices',
+    });
+    return body.items || [];
+  }
+
+  async findVirtualServicesForService(namespace, serviceName) {
+    const found = [];
+    const virtualServices = await this.listVirtualServices(namespace);
+
+    for (const vs of virtualServices) {
+      const routes = vs.spec?.http || [];
+      for (const route of routes) {
+        const destinations = route.route || [];
+        for (const dest of destinations) {
+          const host = dest.destination?.host;
+          if (host === serviceName ||
+              host === `${serviceName}.${namespace}` ||
+              host === `${serviceName}.${namespace}.svc` ||
+              host === `${serviceName}.${namespace}.svc.cluster.local`) {
+            found.push(vs);
+            break;
+          }
+        }
+        if (found.includes(vs)) break;
+      }
+    }
+
+    return found;
+  }
+
   async findHPAForService(namespace, serviceName, serviceSelector) {
     // Strategy 1: Try HPA with same name as service
     const sameName = await this.getHPA(namespace, serviceName);
