@@ -1,0 +1,23 @@
+{
+  "name": "k8s-scale0",
+  "version": "1.0.0",
+  "description": "Kubernetes scale-to-zero controller with Istio VirtualService support",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": [
+    "kubernetes",
+    "scale-to-zero",
+    "istio",
+    "hpa",
+    "virtualservice"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@kubernetes/client-node": "^0.20.0"
+  }
+}
