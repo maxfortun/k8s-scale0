@@ -17,23 +17,28 @@ Add these to your Service:
 
 | Label | Required | Description |
 |-------|----------|-------------|
-| `scale0.io/enabled` | Yes | Set to `"true"` to opt in |
-| `scale0.io/scale-in-after` | No | Seconds of inactivity before scale-down (default: 86400 / 1 day) |
-| `scale0.io/hpa` | No | HPA name (auto-discovered if not set) |
-| `scale0.io/virtualservice` | No | VirtualService name(s), comma-separated (auto-discovered if not set) |
+| `scale0/enabled` | Yes | Set to `"true"` to opt in |
+| `scale0/scale-in-after` | No | Seconds of inactivity before scale-down (default: 86400 / 1 day) |
+| `scale0/hpa` | No | HPA name (auto-discovered if not set) |
+| `scale0/virtualservice` | No | VirtualService name(s), comma-separated (auto-discovered if not set) |
+| `scale0/httproute` | No | HTTPRoute name(s), comma-separated (auto-discovered if not set) |
 
 ### Auto-Discovery
 
-When `scale0.io/hpa` is not set, the controller auto-discovers the HPA:
+When `scale0/hpa` is not set, the controller auto-discovers the HPA:
 1. HPA with same name as the Service
 2. HPA whose `scaleTargetRef.name` matches the Service name
 3. HPA targeting a workload that matches the Service selector
 
-When `scale0.io/virtualservice` is not set, the controller auto-discovers all VirtualServices routing to the Service:
+When `scale0/virtualservice` is not set, the controller auto-discovers all VirtualServices routing to the Service:
 1. Scans all VirtualServices in the namespace
 2. Matches any with a route destination pointing to the Service name
 
-Multiple VirtualServices are supported - all will be redirected on scale-down and restored on wake-up.
+When `scale0/httproute` is not set, the controller auto-discovers all HTTPRoutes (Gateway API) routing to the Service:
+1. Scans all HTTPRoutes in the namespace
+2. Matches any with a backendRef pointing to the Service
+
+Multiple VirtualServices and HTTPRoutes are supported - all will be redirected on scale-down and restored on wake-up.
 
 ### Scaling Modes
 
@@ -53,8 +58,8 @@ kind: Service
 metadata:
   name: my-app
   labels:
-    scale0.io/enabled: "true"
-    scale0.io/scale-in-after: "3600"
+    scale0/enabled: "true"
+    scale0/scale-in-after: "3600"
 spec:
   selector:
     app: my-app
@@ -82,7 +87,7 @@ Environment variables:
 | `WAKEUP_PORT` | 8080 | HTTP server port |
 | `SCALE_IN_AFTER_SECONDS` | 86400 | Default scale-in timeout if not specified (1 day) |
 | `RETRY_AFTER_SECONDS` | 5 | Seconds to wait before retry (Refresh header) |
-| `LABEL_PREFIX` | scale0.io | Label prefix for opt-in |
+| `LABEL_PREFIX` | scale0 | Label prefix for opt-in |
 | `TARPIT_SECRET` | (random) | HMAC secret for tarpit cookie signatures |
 | `TARPIT_DELAY_SECONDS` | 3 | Minimum wait time before retry is accepted |
 | `TARPIT_COOKIE_NAME` | scale0_tarpit | Cookie name for tarpit token |
@@ -111,6 +116,8 @@ Legitimate browsers follow Refresh headers and support cookies. Bots that ignore
 
 ## Requirements
 
-- Kubernetes cluster
-- Istio with VirtualServices
-- HPA configured for opt-in services
+- Kubernetes cluster (GKE, EKS, AKS, etc.)
+- One of:
+  - Istio with VirtualServices
+  - Gateway API with HTTPRoutes (GKE native)
+- Optional: HPA for auto-scaling (works without HPA too)

@@ -6,8 +6,8 @@ metadata:
   labels:
     app: stateful-app
     # scale0 opt-in labels
-    scale0.io/enabled: "true"
-    scale0.io/scale-in-after: "7200"  # scale down after 2 hours
+    scale0/enabled: "true"
+    scale0/scale-in-after: "7200"  # scale down after 2 hours
 spec:
   selector:
     app: stateful-app

@@ -6,8 +6,8 @@ metadata:
   labels:
     app: my-app
     # scale0 opt-in labels
-    scale0.io/enabled: "true"
-    scale0.io/scale-in-after: "3600"  # scale down after 1 hour of inactivity
+    scale0/enabled: "true"
+    scale0/scale-in-after: "3600"  # scale down after 1 hour of inactivity
 spec:
   selector:
     app: my-app

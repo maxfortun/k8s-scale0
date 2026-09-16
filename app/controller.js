@@ -99,8 +99,13 @@ export class Controller {
       return;
     }
 
-    // Auto-discover VirtualServices if not explicitly specified
+    // Auto-discover routing resources (VirtualServices and/or HTTPRoutes)
+    const routeLabelValue = labels[`${this.config.labelPrefix}/httproute`] ||
+      annotations[`${this.config.labelPrefix}/httproute`];
+
     let vsNames = [];
+    let httpRouteNames = [];
+
     if (vsLabelValue) {
       vsNames = vsLabelValue.split(',').map(s => s.trim());
     } else {
@@ -108,10 +113,22 @@ export class Controller {
       if (discoveredVsList.length > 0) {
         vsNames = discoveredVsList.map(vs => vs.metadata.name);
         console.log(`Auto-discovered ${vsNames.length} VirtualService(s) for service ${name}: ${vsNames.join(', ')}`);
-      } else {
-        console.warn(`No VirtualService found for service ${namespace}/${name}, skipping`);
-        return;
       }
+    }
+
+    if (routeLabelValue) {
+      httpRouteNames = routeLabelValue.split(',').map(s => s.trim());
+    } else {
+      const discoveredRoutes = await this.k8s.findHTTPRoutesForService(namespace, name);
+      if (discoveredRoutes.length > 0) {
+        httpRouteNames = discoveredRoutes.map(r => r.metadata.name);
+        console.log(`Auto-discovered ${httpRouteNames.length} HTTPRoute(s) for service ${name}: ${httpRouteNames.join(', ')}`);
+      }
+    }
+
+    if (vsNames.length === 0 && httpRouteNames.length === 0) {
+      console.warn(`No VirtualService or HTTPRoute found for service ${namespace}/${name}, skipping`);
+      return;
     }
 
     // Initialize tracking if not already
@@ -131,11 +148,11 @@ export class Controller {
 
     if (idleMs >= scaleInThresholdMs) {
       console.log(`Service ${namespace}/${name} idle for ${Math.round(idleMs / 1000)}s, scaling down...`);
-      await this.scaleDown(namespace, name, scaleMode, scaleTarget, vsNames);
+      await this.scaleDown(namespace, name, scaleMode, scaleTarget, vsNames, httpRouteNames);
     }
   }
 
-  async scaleDown(namespace, serviceName, scaleMode, scaleTarget, vsNames) {
+  async scaleDown(namespace, serviceName, scaleMode, scaleTarget, vsNames, httpRouteNames) {
     try {
       // Get current VirtualService states
       const virtualServices = [];
@@ -151,13 +168,27 @@ export class Controller {
         }
       }
 
-      if (virtualServices.length === 0) {
-        console.warn(`No VirtualServices found for service ${namespace}/${serviceName}, skipping scale-down`);
+      // Get current HTTPRoute states
+      const httpRoutes = [];
+      for (const routeName of httpRouteNames) {
+        const route = await this.k8s.getHTTPRoute(namespace, routeName);
+        if (route) {
+          httpRoutes.push({
+            name: routeName,
+            spec: JSON.parse(JSON.stringify(route.spec)),
+          });
+        } else {
+          console.warn(`HTTPRoute ${namespace}/${routeName} not found, skipping`);
+        }
+      }
+
+      if (virtualServices.length === 0 && httpRoutes.length === 0) {
+        console.warn(`No routing resources found for service ${namespace}/${serviceName}, skipping scale-down`);
         return;
       }
 
       // Build original state based on scale mode
-      const originalState = { scaleMode, virtualServices };
+      const originalState = { scaleMode, virtualServices, httpRoutes };
 
       if (scaleMode === 'hpa') {
         const hpa = await this.k8s.getHPA(namespace, scaleTarget.name);
@@ -217,6 +248,16 @@ export class Controller {
         }
       }
 
+      // Modify all HTTPRoutes to route to scale0
+      for (const routeState of httpRoutes) {
+        const route = await this.k8s.getHTTPRoute(namespace, routeState.name);
+        if (route) {
+          const modifiedRoute = this.createScale0HTTPRoute(route, serviceName);
+          await this.k8s.replaceHTTPRoute(namespace, routeState.name, modifiedRoute);
+          console.log(`Redirected HTTPRoute ${namespace}/${routeState.name} to scale0`);
+        }
+      }
+
       // Save state
       this.store.saveScaledDownState(namespace, serviceName, originalState);
       const targetDesc = scaleMode === 'pod' ? `${originalState.pods.length} pod(s)` : `${originalState.workload.kind}/${originalState.workload.name}`;
@@ -252,6 +293,40 @@ export class Controller {
         return {
           ...route,
           route: [scale0Route],
+        };
+      });
+    }
+
+    return modified;
+  }
+
+  createScale0HTTPRoute(route, originalServiceName) {
+    const modified = JSON.parse(JSON.stringify(route));
+
+    // Modify each rule to point to scale0
+    if (modified.spec.rules) {
+      modified.spec.rules = modified.spec.rules.map((rule) => {
+        return {
+          ...rule,
+          backendRefs: [{
+            kind: 'Service',
+            name: this.scale0ServiceName,
+            namespace: this.scale0ServiceNamespace,
+            port: 8080,
+            weight: 1,
+          }],
+          filters: [
+            ...(rule.filters || []),
+            {
+              type: 'RequestHeaderModifier',
+              requestHeaderModifier: {
+                set: [
+                  { name: 'x-scale0-original-service', value: originalServiceName },
+                  { name: 'x-scale0-original-namespace', value: route.metadata.namespace },
+                ],
+              },
+            },
+          ],
         };
       });
     }
@@ -312,6 +387,17 @@ export class Controller {
           currentVs.spec = vsState.spec;
           await this.k8s.replaceVirtualService(namespace, vsState.name, currentVs);
           console.log(`Restored VirtualService ${namespace}/${vsState.name}`);
+        }
+      }
+
+      // Restore all HTTPRoutes
+      const httpRoutes = state.httpRoutes || [];
+      for (const routeState of httpRoutes) {
+        const currentRoute = await this.k8s.getHTTPRoute(namespace, routeState.name);
+        if (currentRoute) {
+          currentRoute.spec = routeState.spec;
+          await this.k8s.replaceHTTPRoute(namespace, routeState.name, currentRoute);
+          console.log(`Restored HTTPRoute ${namespace}/${routeState.name}`);
         }
       }
 

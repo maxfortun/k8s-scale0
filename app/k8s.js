@@ -214,6 +214,71 @@ export class K8sClient {
     return body.items;
   }
 
+  // Gateway API HTTPRoute methods
+  async getHTTPRoute(namespace, name) {
+    try {
+      const { body } = await this.customApi.getNamespacedCustomObject({
+        group: 'gateway.networking.k8s.io',
+        version: 'v1',
+        namespace,
+        plural: 'httproutes',
+        name,
+      });
+      return body;
+    } catch (err) {
+      if (err.response?.statusCode === 404) return null;
+      throw err;
+    }
+  }
+
+  async listHTTPRoutes(namespace) {
+    try {
+      const { body } = await this.customApi.listNamespacedCustomObject({
+        group: 'gateway.networking.k8s.io',
+        version: 'v1',
+        namespace,
+        plural: 'httproutes',
+      });
+      return body.items || [];
+    } catch (err) {
+      if (err.response?.statusCode === 404) return [];
+      throw err;
+    }
+  }
+
+  async replaceHTTPRoute(namespace, name, route) {
+    const { body } = await this.customApi.replaceNamespacedCustomObject({
+      group: 'gateway.networking.k8s.io',
+      version: 'v1',
+      namespace,
+      plural: 'httproutes',
+      name,
+      body: route,
+    });
+    return body;
+  }
+
+  async findHTTPRoutesForService(namespace, serviceName) {
+    const found = [];
+    const routes = await this.listHTTPRoutes(namespace);
+
+    for (const route of routes) {
+      const rules = route.spec?.rules || [];
+      for (const rule of rules) {
+        const backendRefs = rule.backendRefs || [];
+        for (const ref of backendRefs) {
+          if (ref.kind === 'Service' && ref.name === serviceName) {
+            found.push(route);
+            break;
+          }
+        }
+        if (found.includes(route)) break;
+      }
+    }
+
+    return found;
+  }
+
   async listVirtualServices(namespace) {
     const { body } = await this.customApi.listNamespacedCustomObject({
       group: 'networking.istio.io',

@@ -8,7 +8,7 @@ const config = {
   wakeupPort: parseInt(process.env.WAKEUP_PORT || '8080', 10),
   scaleInAfterSeconds: parseInt(process.env.SCALE_IN_AFTER_SECONDS || '86400', 10),
   retryAfterSeconds: parseInt(process.env.RETRY_AFTER_SECONDS || '5', 10),
-  labelPrefix: process.env.LABEL_PREFIX || 'scale0.io',
+  labelPrefix: process.env.LABEL_PREFIX || 'scale0',
   tarpitSecret: process.env.TARPIT_SECRET,
   tarpitDelaySeconds: parseInt(process.env.TARPIT_DELAY_SECONDS || '3', 10),
   tarpitCookieName: process.env.TARPIT_COOKIE_NAME || 'scale0_tarpit',

@@ -1,16 +1,16 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: standalone-app
-  namespace: standalone-pod
+  name: gateway-app
+  namespace: gateway-app
   labels:
-    app: standalone-app
+    app: gateway-app
     # scale0 opt-in labels
     scale0/enabled: "true"
-    scale0/scale-in-after: "1800"  # scale down after 30 minutes
+    scale0/scale-in-after: "3600"  # scale down after 1 hour
 spec:
   selector:
-    app: standalone-app
+    app: gateway-app
   ports:
     - port: 80
       targetPort: 80

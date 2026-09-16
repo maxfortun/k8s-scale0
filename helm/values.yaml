@@ -39,7 +39,7 @@ config:
   wakeupPort: "8080"
   scaleInAfterSeconds: "86400"
   retryAfterSeconds: "5"
-  labelPrefix: "scale0.io"
+  labelPrefix: "scale0"
   tarpitDelaySeconds: "3"
 
 tarpit:

@@ -9,17 +9,17 @@ The Service includes scale0 labels:
 ```yaml
 metadata:
   labels:
-    scale0.io/enabled: "true"           # Required: opt-in
-    scale0.io/scale-in-after: "3600"    # Optional: 1 hour (default: 86400 / 1 day)
+    scale0/enabled: "true"           # Required: opt-in
+    scale0/scale-in-after: "3600"    # Optional: 1 hour (default: 86400 / 1 day)
 ```
 
 ## Requirements
 
 For scale0 to manage your application, you need:
 
-1. **Service** with `scale0.io/enabled: "true"` label
-2. **HPA** with the same name as the Service (or specify `scale0.io/hpa` label)
-3. **VirtualService** with the same name as the Service (or specify `scale0.io/virtualservice` label)
+1. **Service** with `scale0/enabled: "true"` label
+2. **HPA** with the same name as the Service (or specify `scale0/hpa` label)
+3. **VirtualService** with the same name as the Service (or specify `scale0/virtualservice` label)
 
 ## What happens
 
@@ -45,11 +45,16 @@ kubectl apply -f statefulset/
 kubectl apply -f pod/
 ```
 
+### Gateway API (GKE without Istio)
+```bash
+kubectl apply -f gateway-api/
+```
+
 ## Labels Reference
 
 | Label | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `scale0.io/enabled` | Yes | - | Set to `"true"` to opt in |
-| `scale0.io/scale-in-after` | No | `86400` | Seconds before scale-down |
-| `scale0.io/hpa` | No | Service name | HPA name if different |
-| `scale0.io/virtualservice` | No | Service name | VirtualService name if different |
+| `scale0/enabled` | Yes | - | Set to `"true"` to opt in |
+| `scale0/scale-in-after` | No | `86400` | Seconds before scale-down |
+| `scale0/hpa` | No | Service name | HPA name if different |
+| `scale0/virtualservice` | No | Service name | VirtualService name if different |

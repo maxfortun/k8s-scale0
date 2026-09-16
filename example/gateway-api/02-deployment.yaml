@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-app
+  namespace: gateway-app
+  labels:
+    app: gateway-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-app
+  template:
+    metadata:
+      labels:
+        app: gateway-app
+    spec:
+      containers:
+        - name: gateway-app
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
