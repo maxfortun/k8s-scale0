@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: scale0
+  namespace: scale0
+  labels:
+    app: scale0
+spec:
+  selector:
+    app: scale0
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http

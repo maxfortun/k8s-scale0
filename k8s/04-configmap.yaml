@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scale0
+  namespace: scale0
+data:
+  CHECK_INTERVAL_MS: "30000"
+  WAKEUP_PORT: "8080"
+  SCALE_IN_AFTER_SECONDS: "86400"
+  RETRY_AFTER_SECONDS: "5"
+  LABEL_PREFIX: "scale0.io"
+  SCALE0_SERVICE_NAME: "scale0"
+  SCALE0_SERVICE_NAMESPACE: "scale0"
+  TARPIT_DELAY_SECONDS: "3"
