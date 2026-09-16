@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: standalone-app
+  namespace: standalone-pod
+  labels:
+    app: standalone-app
+spec:
+  containers:
+    - name: standalone-app
+      image: nginx:alpine
+      ports:
+        - containerPort: 80
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi

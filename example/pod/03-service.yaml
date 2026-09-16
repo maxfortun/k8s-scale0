@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: standalone-app
+  namespace: standalone-pod
+  labels:
+    app: standalone-app
+    # scale0 opt-in labels
+    scale0.io/enabled: "true"
+    scale0.io/scale-in-after: "1800"  # scale down after 30 minutes
+spec:
+  selector:
+    app: standalone-app
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http

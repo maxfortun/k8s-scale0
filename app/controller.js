@@ -54,18 +54,49 @@ export class Controller {
     const vsLabelValue = labels[`${this.config.labelPrefix}/virtualservice`] ||
       annotations[`${this.config.labelPrefix}/virtualservice`];
 
-    // Auto-discover HPA if not explicitly specified
-    let hpaName = hpaLabelValue;
-    if (!hpaName) {
-      const serviceSelector = svc.spec?.selector || {};
+    const serviceSelector = svc.spec?.selector || {};
+
+    // Determine scaling mode: hpa, workload, or pod
+    let scaleMode = null;
+    let scaleTarget = null;
+
+    // Try HPA first
+    if (hpaLabelValue) {
+      scaleMode = 'hpa';
+      scaleTarget = { name: hpaLabelValue };
+    } else {
       const discoveredHpa = await this.k8s.findHPAForService(namespace, name, serviceSelector);
       if (discoveredHpa) {
-        hpaName = discoveredHpa.metadata.name;
-        console.log(`Auto-discovered HPA ${namespace}/${hpaName} for service ${name}`);
-      } else {
-        console.warn(`No HPA found for service ${namespace}/${name}, skipping`);
-        return;
+        scaleMode = 'hpa';
+        scaleTarget = { name: discoveredHpa.metadata.name };
+        console.log(`Auto-discovered HPA ${namespace}/${scaleTarget.name} for service ${name}`);
       }
+    }
+
+    // If no HPA, try workload directly
+    if (!scaleMode) {
+      const workload = await this.k8s.findWorkloadForService(namespace, serviceSelector);
+      if (workload) {
+        scaleMode = 'workload';
+        scaleTarget = workload;
+        console.log(`Auto-discovered ${workload.kind} ${namespace}/${workload.name} for service ${name} (no HPA)`);
+      }
+    }
+
+    // If no workload, try standalone pods
+    if (!scaleMode && Object.keys(serviceSelector).length > 0) {
+      const selectorStr = Object.entries(serviceSelector).map(([k, v]) => `${k}=${v}`).join(',');
+      const pods = await this.k8s.listPodsWithSelector(namespace, selectorStr);
+      if (pods.length > 0) {
+        scaleMode = 'pod';
+        scaleTarget = { pods: pods.map(p => ({ name: p.metadata.name, spec: p })) };
+        console.log(`Found ${pods.length} standalone pod(s) for service ${name}`);
+      }
+    }
+
+    if (!scaleMode) {
+      console.warn(`No scalable resource found for service ${namespace}/${name}, skipping`);
+      return;
     }
 
     // Auto-discover VirtualServices if not explicitly specified
@@ -100,19 +131,12 @@ export class Controller {
 
     if (idleMs >= scaleInThresholdMs) {
       console.log(`Service ${namespace}/${name} idle for ${Math.round(idleMs / 1000)}s, scaling down...`);
-      await this.scaleDown(namespace, name, hpaName, vsNames);
+      await this.scaleDown(namespace, name, scaleMode, scaleTarget, vsNames);
     }
   }
 
-  async scaleDown(namespace, serviceName, hpaName, vsNames) {
+  async scaleDown(namespace, serviceName, scaleMode, scaleTarget, vsNames) {
     try {
-      // Get current HPA state
-      const hpa = await this.k8s.getHPA(namespace, hpaName);
-      if (!hpa) {
-        console.warn(`HPA ${namespace}/${hpaName} not found, skipping scale-down`);
-        return;
-      }
-
       // Get current VirtualService states
       const virtualServices = [];
       for (const vsName of vsNames) {
@@ -132,30 +156,56 @@ export class Controller {
         return;
       }
 
-      // Save original state including workload target info
-      const scaleTargetRef = hpa.spec.scaleTargetRef;
-      const originalState = {
-        hpa: {
-          name: hpaName,
+      // Build original state based on scale mode
+      const originalState = { scaleMode, virtualServices };
+
+      if (scaleMode === 'hpa') {
+        const hpa = await this.k8s.getHPA(namespace, scaleTarget.name);
+        if (!hpa) {
+          console.warn(`HPA ${namespace}/${scaleTarget.name} not found, skipping scale-down`);
+          return;
+        }
+        const scaleTargetRef = hpa.spec.scaleTargetRef;
+        originalState.hpa = {
+          name: scaleTarget.name,
           minReplicas: hpa.spec.minReplicas,
           maxReplicas: hpa.spec.maxReplicas,
-        },
-        workload: {
+        };
+        originalState.workload = {
           kind: scaleTargetRef.kind,
           name: scaleTargetRef.name,
           apiVersion: scaleTargetRef.apiVersion,
-        },
-        virtualServices,
-      };
+        };
 
-      // Scale HPA to 0
-      await this.k8s.patchHPA(namespace, hpaName, {
-        spec: {
-          minReplicas: 0,
-          maxReplicas: 0,
-        },
-      });
-      console.log(`Scaled HPA ${namespace}/${hpaName} to 0`);
+        // Scale HPA to 0
+        await this.k8s.patchHPA(namespace, scaleTarget.name, {
+          spec: { minReplicas: 0, maxReplicas: 0 },
+        });
+        console.log(`Scaled HPA ${namespace}/${scaleTarget.name} to 0`);
+
+      } else if (scaleMode === 'workload') {
+        originalState.workload = {
+          kind: scaleTarget.kind,
+          name: scaleTarget.name,
+          replicas: scaleTarget.replicas,
+        };
+
+        // Scale workload to 0
+        await this.k8s.scaleWorkload(namespace, scaleTarget.kind, scaleTarget.name, 0);
+        console.log(`Scaled ${scaleTarget.kind} ${namespace}/${scaleTarget.name} to 0`);
+
+      } else if (scaleMode === 'pod') {
+        originalState.pods = scaleTarget.pods.map(p => ({
+          name: p.name,
+          spec: JSON.parse(JSON.stringify(p.spec)),
+        }));
+
+        // Delete pods
+        for (const pod of scaleTarget.pods) {
+          await this.k8s.deletePod(namespace, pod.name);
+          console.log(`Deleted pod ${namespace}/${pod.name}`);
+        }
+      }
 
       // Modify all VirtualServices to route to scale0
       for (const vsState of virtualServices) {
@@ -169,7 +219,8 @@ export class Controller {
 
       // Save state
       this.store.saveScaledDownState(namespace, serviceName, originalState);
-      console.log(`Service ${namespace}/${serviceName} (${scaleTargetRef.kind}/${scaleTargetRef.name}) scaled down successfully`);
+      const targetDesc = scaleMode === 'pod' ? `${originalState.pods.length} pod(s)` : `${originalState.workload.kind}/${originalState.workload.name}`;
+      console.log(`Service ${namespace}/${serviceName} (${targetDesc}) scaled down successfully`);
     } catch (err) {
       console.error(`Failed to scale down ${namespace}/${serviceName}:`, err.message);
     }
@@ -216,14 +267,42 @@ export class Controller {
     }
 
     try {
-      // Restore HPA
-      await this.k8s.patchHPA(namespace, state.hpa.name, {
-        spec: {
-          minReplicas: state.hpa.minReplicas,
-          maxReplicas: state.hpa.maxReplicas,
-        },
-      });
-      console.log(`Restored HPA ${namespace}/${state.hpa.name}`);
+      const scaleMode = state.scaleMode || 'hpa'; // backwards compatibility
+
+      if (scaleMode === 'hpa' && state.hpa) {
+        await this.k8s.patchHPA(namespace, state.hpa.name, {
+          spec: {
+            minReplicas: state.hpa.minReplicas,
+            maxReplicas: state.hpa.maxReplicas,
+          },
+        });
+        console.log(`Restored HPA ${namespace}/${state.hpa.name}`);
+
+      } else if (scaleMode === 'workload' && state.workload) {
+        await this.k8s.scaleWorkload(
+          namespace,
+          state.workload.kind,
+          state.workload.name,
+          state.workload.replicas
+        );
+        console.log(`Restored ${state.workload.kind} ${namespace}/${state.workload.name} to ${state.workload.replicas} replicas`);
+
+      } else if (scaleMode === 'pod' && state.pods) {
+        for (const podState of state.pods) {
+          // Clean up spec for recreation
+          const newPod = JSON.parse(JSON.stringify(podState.spec));
+          delete newPod.metadata.resourceVersion;
+          delete newPod.metadata.uid;
+          delete newPod.metadata.creationTimestamp;
+          delete newPod.status;
+          if (newPod.metadata.annotations) {
+            delete newPod.metadata.annotations['kubectl.kubernetes.io/last-applied-configuration'];
+          }
+
+          await this.k8s.createPod(namespace, newPod);
+          console.log(`Recreated pod ${namespace}/${podState.name}`);
+        }
+      }
 
       // Restore all VirtualServices
       const virtualServices = state.virtualServices || (state.virtualService ? [state.virtualService] : []);
@@ -240,8 +319,13 @@ export class Controller {
       this.store.recordActivity(namespace, serviceName);
       this.store.removeScaledDownState(namespace, serviceName);
 
-      const workloadInfo = state.workload ? ` (${state.workload.kind}/${state.workload.name})` : '';
-      console.log(`Service ${namespace}/${serviceName}${workloadInfo} woken up successfully`);
+      let targetDesc = '';
+      if (state.workload) {
+        targetDesc = ` (${state.workload.kind}/${state.workload.name})`;
+      } else if (state.pods) {
+        targetDesc = ` (${state.pods.length} pod(s))`;
+      }
+      console.log(`Service ${namespace}/${serviceName}${targetDesc} woken up successfully`);
       return true;
     } catch (err) {
       console.error(`Failed to wake up ${namespace}/${serviceName}:`, err.message);

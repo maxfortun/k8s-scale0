@@ -40,6 +40,11 @@ kubectl apply -f deployment/
 kubectl apply -f statefulset/
 ```
 
+### Standalone pod (no HPA/controller)
+```bash
+kubectl apply -f pod/
+```
+
 ## Labels Reference
 
 | Label | Required | Default | Description |

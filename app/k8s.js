@@ -125,6 +125,90 @@ export class K8sClient {
     return workload.status?.readyReplicas || 0;
   }
 
+  async scaleWorkload(namespace, kind, name, replicas) {
+    const patch = { spec: { replicas } };
+    const opts = { headers: { 'Content-Type': 'application/merge-patch+json' } };
+
+    switch (kind) {
+      case 'Deployment':
+        await this.appsApi.patchNamespacedDeployment({ namespace, name, body: patch }, opts);
+        break;
+      case 'StatefulSet':
+        await this.appsApi.patchNamespacedStatefulSet({ namespace, name, body: patch }, opts);
+        break;
+      case 'ReplicaSet':
+        await this.appsApi.patchNamespacedReplicaSet({ namespace, name, body: patch }, opts);
+        break;
+      case 'ReplicationController':
+        await this.coreApi.patchNamespacedReplicationController({ namespace, name, body: patch }, opts);
+        break;
+      default:
+        throw new Error(`Cannot scale workload kind: ${kind}`);
+    }
+  }
+
+  async findWorkloadForService(namespace, serviceSelector) {
+    if (!serviceSelector || Object.keys(serviceSelector).length === 0) {
+      return null;
+    }
+
+    const kinds = ['Deployment', 'StatefulSet', 'ReplicaSet'];
+    for (const kind of kinds) {
+      try {
+        let items = [];
+        switch (kind) {
+          case 'Deployment':
+            items = (await this.appsApi.listNamespacedDeployment({ namespace })).body.items;
+            break;
+          case 'StatefulSet':
+            items = (await this.appsApi.listNamespacedStatefulSet({ namespace })).body.items;
+            break;
+          case 'ReplicaSet':
+            items = (await this.appsApi.listNamespacedReplicaSet({ namespace })).body.items;
+            break;
+        }
+
+        for (const workload of items) {
+          const podLabels = workload.spec?.template?.metadata?.labels || {};
+          const matches = Object.entries(serviceSelector).every(
+            ([key, value]) => podLabels[key] === value
+          );
+          if (matches) {
+            return { kind, name: workload.metadata.name, replicas: workload.spec?.replicas || 1 };
+          }
+        }
+      } catch (err) {
+        console.warn(`Error listing ${kind}:`, err.message);
+      }
+    }
+
+    return null;
+  }
+
+  async getPod(namespace, name) {
+    try {
+      const { body } = await this.coreApi.readNamespacedPod({ namespace, name });
+      return body;
+    } catch (err) {
+      if (err.response?.statusCode === 404) return null;
+      throw err;
+    }
+  }
+
+  async listPodsWithSelector(namespace, labelSelector) {
+    const { body } = await this.coreApi.listNamespacedPod({ namespace, labelSelector });
+    return body.items;
+  }
+
+  async deletePod(namespace, name) {
+    await this.coreApi.deleteNamespacedPod({ namespace, name });
+  }
+
+  async createPod(namespace, pod) {
+    const { body } = await this.coreApi.createNamespacedPod({ namespace, body: pod });
+    return body;
+  }
+
   async listHPAs(namespace) {
     const { body } = await this.autoscalingApi.listNamespacedHorizontalPodAutoscaler({ namespace });
     return body.items;

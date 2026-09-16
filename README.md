@@ -35,6 +35,16 @@ When `scale0.io/virtualservice` is not set, the controller auto-discovers all Vi
 
 Multiple VirtualServices are supported - all will be redirected on scale-down and restored on wake-up.
 
+### Scaling Modes
+
+The controller auto-detects the best scaling method:
+
+| Mode | Trigger | Scale Down | Wake Up |
+|------|---------|------------|---------|
+| **HPA** | HPA found | Set HPA min/max to 0 | Restore HPA min/max |
+| **Workload** | No HPA, Deployment/StatefulSet found | Scale replicas to 0 | Restore replicas |
+| **Pod** | No workload, standalone pods found | Delete pods | Recreate pods |
+
 ## Example
 
 ```yaml

@@ -15,10 +15,14 @@ rules:
   - apiGroups: ["networking.istio.io"]
     resources: ["virtualservices"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  # Read workloads (to check ready replicas) - all types HPA can target
+  # Manage workloads - all types HPA can target
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "replicasets"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: [""]
     resources: ["replicationcontrollers"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Manage pods (for standalone pod scaling)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
