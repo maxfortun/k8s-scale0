@@ -28,10 +28,16 @@ For scale0 to manage your application, you need:
 3. **On request**: scale0 verifies the client (tarpit), restores HPA/VirtualService, returns 503 with Refresh header
 4. **Client retries**: Request goes to your now-waking app
 
-## Deploy
+## Examples
 
+### Deployment-based app
 ```bash
-kubectl apply -f my-app.yaml
+kubectl apply -f deployment/
+```
+
+### StatefulSet-based app
+```bash
+kubectl apply -f statefulset/
 ```
 
 ## Labels Reference

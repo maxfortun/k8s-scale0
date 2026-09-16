@@ -1,0 +1,20 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: stateful-app
+  namespace: stateful-app
+spec:
+  hosts:
+    - stateful-app.example.com
+  gateways:
+    - istio-system/default-gateway
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: stateful-app
+            port:
+              number: 6379
+          weight: 100
