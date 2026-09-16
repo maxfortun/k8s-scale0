@@ -93,12 +93,18 @@ export class Controller {
         return;
       }
 
-      // Save original state
+      // Save original state including workload target info
+      const scaleTargetRef = hpa.spec.scaleTargetRef;
       const originalState = {
         hpa: {
           name: hpaName,
           minReplicas: hpa.spec.minReplicas,
           maxReplicas: hpa.spec.maxReplicas,
+        },
+        workload: {
+          kind: scaleTargetRef.kind,
+          name: scaleTargetRef.name,
+          apiVersion: scaleTargetRef.apiVersion,
         },
         virtualService: {
           name: vsName,
@@ -122,7 +128,7 @@ export class Controller {
 
       // Save state
       this.store.saveScaledDownState(namespace, serviceName, originalState);
-      console.log(`Service ${namespace}/${serviceName} scaled down successfully`);
+      console.log(`Service ${namespace}/${serviceName} (${scaleTargetRef.kind}/${scaleTargetRef.name}) scaled down successfully`);
     } catch (err) {
       console.error(`Failed to scale down ${namespace}/${serviceName}:`, err.message);
     }
@@ -190,7 +196,8 @@ export class Controller {
       this.store.recordActivity(namespace, serviceName);
       this.store.removeScaledDownState(namespace, serviceName);
 
-      console.log(`Service ${namespace}/${serviceName} woken up successfully`);
+      const workloadInfo = state.workload ? ` (${state.workload.kind}/${state.workload.name})` : '';
+      console.log(`Service ${namespace}/${serviceName}${workloadInfo} woken up successfully`);
       return true;
     } catch (err) {
       console.error(`Failed to wake up ${namespace}/${serviceName}:`, err.message);

@@ -92,9 +92,26 @@ export class K8sClient {
     return body;
   }
 
-  async getDeployment(namespace, name) {
+  async getWorkload(namespace, kind, name) {
     try {
-      const { body } = await this.appsApi.readNamespacedDeployment({ namespace, name });
+      let body;
+      switch (kind) {
+        case 'Deployment':
+          ({ body } = await this.appsApi.readNamespacedDeployment({ namespace, name }));
+          break;
+        case 'StatefulSet':
+          ({ body } = await this.appsApi.readNamespacedStatefulSet({ namespace, name }));
+          break;
+        case 'ReplicaSet':
+          ({ body } = await this.appsApi.readNamespacedReplicaSet({ namespace, name }));
+          break;
+        case 'ReplicationController':
+          ({ body } = await this.coreApi.readNamespacedReplicationController({ namespace, name }));
+          break;
+        default:
+          console.warn(`Unknown workload kind: ${kind}`);
+          return null;
+      }
       return body;
     } catch (err) {
       if (err.response?.statusCode === 404) return null;
@@ -102,14 +119,9 @@ export class K8sClient {
     }
   }
 
-  async scaleDeployment(namespace, name, replicas) {
-    const { body } = await this.appsApi.patchNamespacedDeployment({
-      namespace,
-      name,
-      body: { spec: { replicas } },
-    }, {
-      headers: { 'Content-Type': 'application/merge-patch+json' },
-    });
-    return body;
+  async getWorkloadReadyReplicas(namespace, kind, name) {
+    const workload = await this.getWorkload(namespace, kind, name);
+    if (!workload) return 0;
+    return workload.status?.readyReplicas || 0;
   }
 }
