@@ -46,8 +46,7 @@ spec:
 docker build -t scale0:latest .
 
 # Deploy to cluster
-kubectl apply -f k8s/rbac.yaml
-kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/
 ```
 
 ## Configuration
