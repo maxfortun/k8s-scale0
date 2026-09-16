@@ -19,8 +19,16 @@ Add these to your Service:
 |-------|----------|-------------|
 | `scale0.io/enabled` | Yes | Set to `"true"` to opt in |
 | `scale0.io/scale-in-after` | No | Seconds of inactivity before scale-down (default: 86400 / 1 day) |
-| `scale0.io/hpa` | No | HPA name if different from service name |
+| `scale0.io/hpa` | No | HPA name (auto-discovered if not set) |
 | `scale0.io/virtualservice` | No | VirtualService name if different from service name |
+
+### HPA Auto-Discovery
+
+When `scale0.io/hpa` is not set, the controller auto-discovers the HPA:
+
+1. Look for HPA with same name as the Service
+2. Look for HPA whose `scaleTargetRef.name` matches the Service name
+3. Find workloads matching the Service selector, then find HPAs targeting them
 
 ## Example
 

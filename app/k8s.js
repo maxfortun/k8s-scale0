@@ -124,4 +124,46 @@ export class K8sClient {
     if (!workload) return 0;
     return workload.status?.readyReplicas || 0;
   }
+
+  async listHPAs(namespace) {
+    const { body } = await this.autoscalingApi.listNamespacedHorizontalPodAutoscaler({ namespace });
+    return body.items;
+  }
+
+  async findHPAForService(namespace, serviceName, serviceSelector) {
+    // Strategy 1: Try HPA with same name as service
+    const sameName = await this.getHPA(namespace, serviceName);
+    if (sameName) {
+      return sameName;
+    }
+
+    // Strategy 2: List all HPAs and find one whose scaleTargetRef.name matches service name
+    const hpas = await this.listHPAs(namespace);
+    const byTargetName = hpas.find(hpa => hpa.spec.scaleTargetRef?.name === serviceName);
+    if (byTargetName) {
+      return byTargetName;
+    }
+
+    // Strategy 3: Find workload matching service selector, then find HPA targeting it
+    if (serviceSelector && Object.keys(serviceSelector).length > 0) {
+      for (const hpa of hpas) {
+        const ref = hpa.spec.scaleTargetRef;
+        if (!ref) continue;
+
+        const workload = await this.getWorkload(namespace, ref.kind, ref.name);
+        if (!workload) continue;
+
+        const podLabels = workload.spec?.template?.metadata?.labels || {};
+        const matches = Object.entries(serviceSelector).every(
+          ([key, value]) => podLabels[key] === value
+        );
+
+        if (matches) {
+          return hpa;
+        }
+      }
+    }
+
+    return null;
+  }
 }

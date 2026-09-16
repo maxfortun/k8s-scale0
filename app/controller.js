@@ -48,13 +48,26 @@ export class Controller {
       10
     );
 
-    const hpaName = labels[`${this.config.labelPrefix}/hpa`] ||
-      annotations[`${this.config.labelPrefix}/hpa`] ||
-      name;
+    const hpaLabelValue = labels[`${this.config.labelPrefix}/hpa`] ||
+      annotations[`${this.config.labelPrefix}/hpa`];
 
     const vsName = labels[`${this.config.labelPrefix}/virtualservice`] ||
       annotations[`${this.config.labelPrefix}/virtualservice`] ||
       name;
+
+    // Auto-discover HPA if not explicitly specified
+    let hpaName = hpaLabelValue;
+    if (!hpaName) {
+      const serviceSelector = svc.spec?.selector || {};
+      const discoveredHpa = await this.k8s.findHPAForService(namespace, name, serviceSelector);
+      if (discoveredHpa) {
+        hpaName = discoveredHpa.metadata.name;
+        console.log(`Auto-discovered HPA ${namespace}/${hpaName} for service ${name}`);
+      } else {
+        console.warn(`No HPA found for service ${namespace}/${name}, skipping`);
+        return;
+      }
+    }
 
     // Initialize tracking if not already
     if (!this.store.getLastActivity(namespace, name)) {
