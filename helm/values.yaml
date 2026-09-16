@@ -1,0 +1,54 @@
+replicaCount: 1
+
+image:
+  repository: scale0
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  create: true
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+
+probes:
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+config:
+  checkIntervalMs: "30000"
+  wakeupPort: "8080"
+  scaleInAfterSeconds: "86400"
+  retryAfterSeconds: "5"
+  labelPrefix: "scale0.io"
+  tarpitDelaySeconds: "3"
+
+tarpit:
+  secret: ""
+  existingSecret: ""
+  secretKey: "tarpit-secret"
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

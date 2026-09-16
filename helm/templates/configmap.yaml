@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "scale0.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scale0.labels" . | nindent 4 }}
+data:
+  CHECK_INTERVAL_MS: {{ .Values.config.checkIntervalMs | quote }}
+  WAKEUP_PORT: {{ .Values.config.wakeupPort | quote }}
+  SCALE_IN_AFTER_SECONDS: {{ .Values.config.scaleInAfterSeconds | quote }}
+  RETRY_AFTER_SECONDS: {{ .Values.config.retryAfterSeconds | quote }}
+  LABEL_PREFIX: {{ .Values.config.labelPrefix | quote }}
+  SCALE0_SERVICE_NAME: {{ include "scale0.fullname" . | quote }}
+  SCALE0_SERVICE_NAMESPACE: {{ .Release.Namespace | quote }}
+  TARPIT_DELAY_SECONDS: {{ .Values.config.tarpitDelaySeconds | quote }}

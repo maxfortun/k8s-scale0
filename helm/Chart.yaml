@@ -1,0 +1,14 @@
+apiVersion: v2
+name: scale0
+description: Kubernetes scale-to-zero controller with Istio VirtualService support
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - kubernetes
+  - scale-to-zero
+  - istio
+  - hpa
+  - virtualservice
+maintainers:
+  - name: maxfortun
