@@ -170,7 +170,9 @@ This test:
 4. Calls the wakeup endpoint (with tarpit flow)
 5. Verifies HPA is restored (scale-out)
 
-**Requirements:** `kubectl` with cluster access, Istio installed. ~5 minutes runtime.
+**Requirements:** `kubectl` with cluster access, Docker (for Istio install). ~5 minutes runtime.
+
+The test automatically installs Gateway API CRDs and Istio if not present.
 
 ### Test Manifests
 

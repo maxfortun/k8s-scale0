@@ -35,6 +35,59 @@ check_prerequisites() {
     log_info "Prerequisites OK"
 }
 
+install_gateway_api() {
+    if kubectl get crd httproutes.gateway.networking.k8s.io &> /dev/null; then
+        log_info "Gateway API CRDs already installed"
+        return 0
+    fi
+
+    log_info "Installing Gateway API CRDs..."
+    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml 2>&1 || {
+        log_error "Failed to install Gateway API CRDs"
+        return 1
+    }
+    log_info "Gateway API CRDs installed"
+}
+
+install_istio() {
+    if kubectl get crd virtualservices.networking.istio.io &> /dev/null; then
+        log_info "Istio CRDs already installed"
+        return 0
+    fi
+
+    log_info "Installing Istio (minimal profile)..."
+
+    # Create modified kubeconfig for Docker (handles Docker Desktop)
+    local kube_dir=$(mktemp -d)
+    local k8s_server=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+
+    # Replace localhost/127.0.0.1 with host.docker.internal for Docker access
+    kubectl config view --raw | \
+        sed 's/127.0.0.1/host.docker.internal/g' | \
+        sed 's/localhost/host.docker.internal/g' | \
+        sed 's/certificate-authority-data:.*/insecure-skip-tls-verify: true/' > "$kube_dir/config"
+    chmod 644 "$kube_dir/config"
+
+    docker run --rm --user root \
+        -e KUBECONFIG=/root/.kube/config \
+        -v "$kube_dir:/root/.kube" \
+        istio/istioctl:1.20.0 install --set profile=minimal -y 2>&1 || {
+        log_error "Failed to install Istio"
+        rm -rf "$kube_dir"
+        return 1
+    }
+
+    rm -rf "$kube_dir"
+
+    # Wait for Istio to be ready
+    log_info "Waiting for Istio to be ready..."
+    kubectl wait --for=condition=available deployment/istiod -n istio-system --timeout=120s 2>&1 || {
+        log_warn "Istio deployment not ready, continuing anyway"
+    }
+
+    log_info "Istio installed"
+}
+
 deploy_scale0_controller() {
     log_info "Deploying scale0 controller to cluster..."
 
@@ -167,12 +220,12 @@ EOF
 }
 
 deploy_test_workloads() {
-    log_info "Deploying test workloads..."
+    log_info "Deploying test workloads (both Istio VirtualService and Gateway API HTTPRoute)..."
 
     # Create test namespace
     kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
 
-    # Deploy test app with 2 minute scale-in (using Gateway API HTTPRoute)
+    # Deploy test app with both routing types
     cat <<EOF | kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -236,6 +289,7 @@ spec:
           type: Utilization
           averageUtilization: 70
 ---
+# Gateway API HTTPRoute
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -253,12 +307,31 @@ spec:
         - kind: Service
           name: e2e-test-app
           port: 80
+---
+# Istio VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: e2e-test-vs
+  namespace: $NAMESPACE
+spec:
+  hosts:
+    - e2e-test.example.com
+  http:
+    - match:
+        - uri:
+            prefix: /
+      route:
+        - destination:
+            host: e2e-test-app
+            port:
+              number: 80
 EOF
 
     log_info "Waiting for deployment to be ready..."
     kubectl rollout status deployment/e2e-test-app -n $NAMESPACE --timeout=120s
 
-    log_info "Test workloads deployed"
+    log_info "Test workloads deployed (HTTPRoute + VirtualService)"
 }
 
 get_replica_count() {
@@ -284,6 +357,7 @@ wait_for_scale_in() {
         if [ "$replicas" = "0" ]; then
             echo ""
             log_info "Scale-in detected! Deployment scaled to 0 replicas"
+            verify_routing_redirected
             return 0
         fi
 
@@ -294,6 +368,26 @@ wait_for_scale_in() {
     echo ""
     log_error "Scale-in did not occur within ${WAIT_FOR_SCALE_IN}s"
     return 1
+}
+
+verify_routing_redirected() {
+    log_info "Verifying routing resources were redirected..."
+
+    # Check HTTPRoute
+    local httproute_backend=$(kubectl get httproute e2e-test-route -n $NAMESPACE -o jsonpath='{.spec.rules[0].backendRefs[0].name}' 2>/dev/null)
+    if [ "$httproute_backend" = "scale0-controller" ]; then
+        log_info "  HTTPRoute: redirected to scale0-controller ✓"
+    else
+        log_warn "  HTTPRoute: backend is '$httproute_backend' (expected scale0-controller)"
+    fi
+
+    # Check VirtualService
+    local vs_host=$(kubectl get virtualservice e2e-test-vs -n $NAMESPACE -o jsonpath='{.spec.http[0].route[0].destination.host}' 2>/dev/null)
+    if echo "$vs_host" | grep -q "scale0-controller"; then
+        log_info "  VirtualService: redirected to scale0-controller ✓"
+    else
+        log_warn "  VirtualService: destination is '$vs_host' (expected scale0-controller)"
+    fi
 }
 
 trigger_wakeup() {
@@ -349,6 +443,7 @@ wait_for_scale_out() {
         if [ "$replicas" != "0" ] && [ "$replicas" != "" ]; then
             echo ""
             log_info "Scale-out detected! Deployment scaled to $replicas replicas"
+            verify_routing_restored
             return 0
         fi
 
@@ -359,6 +454,26 @@ wait_for_scale_out() {
     echo ""
     log_error "Scale-out did not occur within ${WAIT_FOR_SCALE_OUT}s"
     return 1
+}
+
+verify_routing_restored() {
+    log_info "Verifying routing resources were restored..."
+
+    # Check HTTPRoute
+    local httproute_backend=$(kubectl get httproute e2e-test-route -n $NAMESPACE -o jsonpath='{.spec.rules[0].backendRefs[0].name}' 2>/dev/null)
+    if [ "$httproute_backend" = "e2e-test-app" ]; then
+        log_info "  HTTPRoute: restored to e2e-test-app ✓"
+    else
+        log_warn "  HTTPRoute: backend is '$httproute_backend' (expected e2e-test-app)"
+    fi
+
+    # Check VirtualService
+    local vs_host=$(kubectl get virtualservice e2e-test-vs -n $NAMESPACE -o jsonpath='{.spec.http[0].route[0].destination.host}' 2>/dev/null)
+    if [ "$vs_host" = "e2e-test-app" ]; then
+        log_info "  VirtualService: restored to e2e-test-app ✓"
+    else
+        log_warn "  VirtualService: destination is '$vs_host' (expected e2e-test-app)"
+    fi
 }
 
 cleanup() {
@@ -381,6 +496,10 @@ run_test() {
     log_info ""
 
     check_prerequisites
+
+    # Install routing CRDs if needed
+    install_gateway_api
+    install_istio
 
     # Cleanup any previous run
     cleanup 2>/dev/null || true
