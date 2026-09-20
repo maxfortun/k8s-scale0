@@ -546,6 +546,49 @@ describe('Controller', () => {
 
         expect(mockK8s.replaceVirtualService).toHaveBeenCalled();
       });
+
+      it('should restore VirtualService using minimal http format', async () => {
+        const originalHttp = [{ route: [{ destination: { host: 'original', port: { number: 80 } } }] }];
+        await store.saveScaledDownState('ns', 'svc', {
+          scaleMode: 'hpa',
+          hpa: { name: 'hpa', minReplicas: 1, maxReplicas: 5 },
+          workload: { kind: 'Deployment', name: 'd', replicas: 2 },
+          virtualServices: [{ name: 'vs', http: originalHttp }],
+        });
+        mockK8s.getVirtualService.mockResolvedValue({
+          metadata: { name: 'vs' },
+          spec: { hosts: ['example.com'], http: [{ route: [{ destination: { host: 'scale0' } }] }] },
+        });
+
+        await controller.wakeUp('ns', 'svc');
+
+        expect(mockK8s.replaceVirtualService).toHaveBeenCalled();
+        const restored = mockK8s.replaceVirtualService.mock.calls[0][2];
+        expect(restored.spec.http).toEqual(originalHttp);
+        expect(restored.spec.hosts).toEqual(['example.com']); // Other spec fields preserved
+      });
+
+      it('should restore HTTPRoute using minimal rules format', async () => {
+        const originalRules = [{ backendRefs: [{ name: 'original', port: 80 }] }];
+        await store.saveScaledDownState('ns', 'svc', {
+          scaleMode: 'hpa',
+          hpa: { name: 'hpa', minReplicas: 1, maxReplicas: 5 },
+          workload: { kind: 'Deployment', name: 'd', replicas: 2 },
+          virtualServices: [],
+          httpRoutes: [{ name: 'route', rules: originalRules }],
+        });
+        mockK8s.getHTTPRoute.mockResolvedValue({
+          metadata: { name: 'route' },
+          spec: { hostnames: ['example.com'], rules: [{ backendRefs: [{ name: 'scale0' }] }] },
+        });
+
+        await controller.wakeUp('ns', 'svc');
+
+        expect(mockK8s.replaceHTTPRoute).toHaveBeenCalled();
+        const restored = mockK8s.replaceHTTPRoute.mock.calls[0][2];
+        expect(restored.spec.rules).toEqual(originalRules);
+        expect(restored.spec.hostnames).toEqual(['example.com']); // Other spec fields preserved
+      });
     });
 
     it('should handle errors gracefully', async () => {

@@ -202,28 +202,30 @@ export class Controller {
     this.scalingDown.add(lockKey);
 
     try {
-      // Get current VirtualService states
+      // Get current VirtualService states (minimal - only store routes, not full spec)
       const virtualServices = [];
       for (const vsName of vsNames) {
         const vs = await this.k8s.getVirtualService(namespace, vsName);
         if (vs) {
+          // Only store the http routes - that's what we modify
           virtualServices.push({
             name: vsName,
-            spec: JSON.parse(JSON.stringify(vs.spec)),
+            http: vs.spec?.http ? JSON.parse(JSON.stringify(vs.spec.http)) : [],
           });
         } else {
           console.warn(`VirtualService ${namespace}/${vsName} not found, skipping`);
         }
       }
 
-      // Get current HTTPRoute states
+      // Get current HTTPRoute states (minimal - only store rules, not full spec)
       const httpRoutes = [];
       for (const routeName of httpRouteNames) {
         const route = await this.k8s.getHTTPRoute(namespace, routeName);
         if (route) {
+          // Only store the rules - that's what we modify
           httpRoutes.push({
             name: routeName,
-            spec: JSON.parse(JSON.stringify(route.spec)),
+            rules: route.spec?.rules ? JSON.parse(JSON.stringify(route.spec.rules)) : [],
           });
         } else {
           console.warn(`HTTPRoute ${namespace}/${routeName} not found, skipping`);
@@ -460,23 +462,33 @@ export class Controller {
         }
       }
 
-      // Restore all VirtualServices
+      // Restore all VirtualServices (minimal state - only http routes stored)
       const virtualServices = state.virtualServices || (state.virtualService ? [state.virtualService] : []);
       for (const vsState of virtualServices) {
         const currentVs = await this.k8s.getVirtualService(namespace, vsState.name);
         if (currentVs) {
-          currentVs.spec = vsState.spec;
+          // Support both old (full spec) and new (minimal http) formats
+          if (vsState.spec) {
+            currentVs.spec = vsState.spec;
+          } else if (vsState.http) {
+            currentVs.spec.http = vsState.http;
+          }
           await this.k8s.replaceVirtualService(namespace, vsState.name, currentVs);
           console.log(`Restored VirtualService ${namespace}/${vsState.name}`);
         }
       }
 
-      // Restore all HTTPRoutes
+      // Restore all HTTPRoutes (minimal state - only rules stored)
       const httpRoutes = state.httpRoutes || [];
       for (const routeState of httpRoutes) {
         const currentRoute = await this.k8s.getHTTPRoute(namespace, routeState.name);
         if (currentRoute) {
-          currentRoute.spec = routeState.spec;
+          // Support both old (full spec) and new (minimal rules) formats
+          if (routeState.spec) {
+            currentRoute.spec = routeState.spec;
+          } else if (routeState.rules) {
+            currentRoute.spec.rules = routeState.rules;
+          }
           await this.k8s.replaceHTTPRoute(namespace, routeState.name, currentRoute);
           console.log(`Restored HTTPRoute ${namespace}/${routeState.name}`);
         }
