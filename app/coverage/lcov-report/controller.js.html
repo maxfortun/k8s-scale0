@@ -23,30 +23,30 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">96.01% </span>
+                <span class="strong">95.6% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>193/201</span>
+                <span class='fraction'>196/205</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">83.47% </span>
+                <span class="strong">83.6% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>96/115</span>
+                <span class='fraction'>102/122</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">89.47% </span>
+                <span class="strong">85% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>17/19</span>
+                <span class='fraction'>17/20</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">96.89% </span>
+                <span class="strong">96.44% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>187/193</span>
+                <span class='fraction'>190/197</span>
             </div>
         
             
@@ -484,7 +484,20 @@
 <a name='L419'></a><a href='#L419'>419</a>
 <a name='L420'></a><a href='#L420'>420</a>
 <a name='L421'></a><a href='#L421'>421</a>
-<a name='L422'></a><a href='#L422'>422</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L422'></a><a href='#L422'>422</a>
+<a name='L423'></a><a href='#L423'>423</a>
+<a name='L424'></a><a href='#L424'>424</a>
+<a name='L425'></a><a href='#L425'>425</a>
+<a name='L426'></a><a href='#L426'>426</a>
+<a name='L427'></a><a href='#L427'>427</a>
+<a name='L428'></a><a href='#L428'>428</a>
+<a name='L429'></a><a href='#L429'>429</a>
+<a name='L430'></a><a href='#L430'>430</a>
+<a name='L431'></a><a href='#L431'>431</a>
+<a name='L432'></a><a href='#L432'>432</a>
+<a name='L433'></a><a href='#L433'>433</a>
+<a name='L434'></a><a href='#L434'>434</a>
+<a name='L435'></a><a href='#L435'>435</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">48x</span>
 <span class="cline-any cline-yes">48x</span>
@@ -534,6 +547,13 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">34x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">34x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -675,6 +695,12 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">14x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">14x</span>
 <span class="cline-any cline-yes">11x</span>
@@ -955,6 +981,13 @@
       10
     );
 &nbsp;
+    // CORS config from service annotations
+    const corsOriginsStr = annotations[`${this.config.labelPrefix}/cors-origins`];
+    const corsOrigins = corsOriginsStr
+      ? <span class="branch-0 cbranch-no" title="branch not covered" >corsOriginsStr.split(',').map(<span class="fstat-no" title="function not covered" >s </span>=&gt; <span class="cstat-no" title="statement not covered" >s.trim())</span>.filter(Boolean)</span>
+      : null;
+    const corsCredentials = annotations[`${this.config.labelPrefix}/cors-credentials`] === 'true';
+&nbsp;
     const hpaLabelValue = labels[`${this.config.labelPrefix}/hpa`] ||
       annotations[`${this.config.labelPrefix}/hpa`];
 &nbsp;
@@ -1055,11 +1088,11 @@
 &nbsp;
     if (idleMs &gt;= scaleInThresholdMs) {
       console.log(`Service ${namespace}/${name} idle for ${Math.round(idleMs / 1000)}s, scaling down...`);
-      await this.scaleDown(namespace, name, scaleMode, scaleTarget, vsNames, httpRouteNames);
+      await this.scaleDown(namespace, name, scaleMode, scaleTarget, vsNames, httpRouteNames, { corsOrigins, corsCredentials });
     }
   }
 &nbsp;
-  async scaleDown(namespace, serviceName, scaleMode, scaleTarget, vsNames, httpRouteNames) {
+  async scaleDown(namespace, serviceName, scaleMode, scaleTarget, vsNames, httpRouteNames, corsConfig = {}) {
     try {
       // Get current VirtualService states
       const virtualServices = [];
@@ -1095,7 +1128,13 @@
       }
 &nbsp;
       // Build original state based on scale mode
-      const originalState = { scaleMode, virtualServices, httpRoutes };
+      const originalState = {
+        scaleMode,
+        virtualServices,
+        httpRoutes,
+        corsOrigins: corsConfig.corsOrigins || null,
+        corsCredentials: corsConfig.corsCredentials || false,
+      };
 &nbsp;
       if (scaleMode === 'hpa') {
         const hpa = await this.k8s.getHPA(namespace, scaleTarget.name);
@@ -1333,7 +1372,7 @@
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-09-20T03:05:47.315Z
+                at 2026-09-20T03:10:08.670Z
             </div>
         <script src="prettify.js"></script>
         <script>

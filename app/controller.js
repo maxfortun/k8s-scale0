@@ -48,6 +48,13 @@ export class Controller {
       10
     );
 
+    // CORS config from service annotations
+    const corsOriginsStr = annotations[`${this.config.labelPrefix}/cors-origins`];
+    const corsOrigins = corsOriginsStr
+      ? corsOriginsStr.split(',').map(s => s.trim()).filter(Boolean)
+      : null;
+    const corsCredentials = annotations[`${this.config.labelPrefix}/cors-credentials`] === 'true';
+
     const hpaLabelValue = labels[`${this.config.labelPrefix}/hpa`] ||
       annotations[`${this.config.labelPrefix}/hpa`];
 
@@ -148,11 +155,11 @@ export class Controller {
 
     if (idleMs >= scaleInThresholdMs) {
       console.log(`Service ${namespace}/${name} idle for ${Math.round(idleMs / 1000)}s, scaling down...`);
-      await this.scaleDown(namespace, name, scaleMode, scaleTarget, vsNames, httpRouteNames);
+      await this.scaleDown(namespace, name, scaleMode, scaleTarget, vsNames, httpRouteNames, { corsOrigins, corsCredentials });
     }
   }
 
-  async scaleDown(namespace, serviceName, scaleMode, scaleTarget, vsNames, httpRouteNames) {
+  async scaleDown(namespace, serviceName, scaleMode, scaleTarget, vsNames, httpRouteNames, corsConfig = {}) {
     try {
       // Get current VirtualService states
       const virtualServices = [];
@@ -188,7 +195,13 @@ export class Controller {
       }
 
       // Build original state based on scale mode
-      const originalState = { scaleMode, virtualServices, httpRoutes };
+      const originalState = {
+        scaleMode,
+        virtualServices,
+        httpRoutes,
+        corsOrigins: corsConfig.corsOrigins || null,
+        corsCredentials: corsConfig.corsCredentials || false,
+      };
 
       if (scaleMode === 'hpa') {
         const hpa = await this.k8s.getHPA(namespace, scaleTarget.name);

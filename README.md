@@ -15,13 +15,15 @@ Kubernetes scale-to-zero controller with Istio VirtualService support.
 
 Add these to your Service:
 
-| Label | Required | Description |
-|-------|----------|-------------|
+| Label/Annotation | Required | Description |
+|------------------|----------|-------------|
 | `scale0/enabled` | Yes | Set to `"true"` to opt in |
 | `scale0/scale-in-after` | No | Seconds of inactivity before scale-down (default: 86400 / 1 day) |
 | `scale0/hpa` | No | HPA name (auto-discovered if not set) |
 | `scale0/virtualservice` | No | VirtualService name(s), comma-separated (auto-discovered if not set) |
 | `scale0/httproute` | No | HTTPRoute name(s), comma-separated (auto-discovered if not set) |
+| `scale0/cors-origins` | No | Comma-separated list of allowed CORS origins for this service |
+| `scale0/cors-credentials` | No | Set to `"true"` to allow credentials with CORS |
 
 ### Auto-Discovery
 
@@ -91,10 +93,20 @@ Environment variables:
 | `TARPIT_SECRET` | (random) | HMAC secret for tarpit cookie signatures |
 | `TARPIT_DELAY_SECONDS` | 3 | Minimum wait time before retry is accepted |
 | `TARPIT_COOKIE_NAME` | scale0_tarpit | Cookie name for tarpit token |
-| `CORS_ALLOWED_ORIGINS` | (none) | Comma-separated list of allowed CORS origins |
+| `CORS_ALLOWED_ORIGINS` | (none) | Default allowed CORS origins (comma-separated) |
+| `CORS_ALLOW_CREDENTIALS` | false | Allow credentials when no explicit origins configured |
 | `WAKEUP_TIMEOUT_MS` | 30000 | Timeout for wakeup operations |
 
-**Security note:** Set `TARPIT_SECRET` explicitly in production. If not set, a random secret is generated, and tarpit cookies become invalid on pod restart.
+**Security notes:**
+- Set `TARPIT_SECRET` explicitly in production. If not set, a random secret is generated, and tarpit cookies become invalid on pod restart.
+- CORS can be configured per-service via annotations (highest priority), controller defaults, or fall back to wildcard `*`.
+
+### CORS Priority
+
+1. **Service annotation** (`scale0/cors-origins`) - highest priority
+2. **Controller default** (`CORS_ALLOWED_ORIGINS` env var)
+3. **Reflect origin** if `CORS_ALLOW_CREDENTIALS=true` or `scale0/cors-credentials=true`
+4. **Wildcard `*`** - default when nothing configured
 
 ## State Persistence
 

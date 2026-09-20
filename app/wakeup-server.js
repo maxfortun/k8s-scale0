@@ -49,18 +49,28 @@ export class WakeupServer {
     return 'text/html';
   }
 
-  addCorsHeaders(req, headers) {
+  addCorsHeaders(req, headers, serviceConfig = null) {
     const origin = req.headers.origin;
-    const allowedOrigins = this.config.corsAllowedOrigins;
+
+    // Priority: service annotation > controller default > reflect/wildcard
+    const allowedOrigins = serviceConfig?.corsOrigins || this.config.corsAllowedOrigins;
+    const allowCredentials = serviceConfig?.corsCredentials ?? this.config.corsAllowCredentials ?? false;
 
     if (allowedOrigins && allowedOrigins.length > 0) {
+      // Explicit allowlist configured
       if (origin && allowedOrigins.includes(origin)) {
         headers['Access-Control-Allow-Origin'] = origin;
         headers['Access-Control-Allow-Credentials'] = 'true';
       } else {
+        // Origin not in list - return first allowed (no credentials)
         headers['Access-Control-Allow-Origin'] = allowedOrigins[0];
       }
+    } else if (allowCredentials && origin) {
+      // No explicit list but credentials needed - reflect origin
+      headers['Access-Control-Allow-Origin'] = origin;
+      headers['Access-Control-Allow-Credentials'] = 'true';
     } else {
+      // No restrictions - wildcard
       headers['Access-Control-Allow-Origin'] = '*';
     }
 
@@ -69,7 +79,18 @@ export class WakeupServer {
     headers['Access-Control-Expose-Headers'] = 'Refresh, Retry-After, Set-Cookie';
   }
 
-  sendResponse(req, res, statusCode, statusMessage, body, refreshDelay = 0, setCookie = null) {
+  getServiceCorsConfig(namespace, serviceName) {
+    const state = this.store.getScaledDownState(namespace, serviceName);
+    if (!state?.corsOrigins && !state?.corsCredentials) {
+      return null;
+    }
+    return {
+      corsOrigins: state.corsOrigins,
+      corsCredentials: state.corsCredentials,
+    };
+  }
+
+  sendResponse(req, res, statusCode, statusMessage, body, refreshDelay = 0, setCookie = null, serviceConfig = null) {
     const contentType = this.getAcceptedContentType(req);
     const url = this.getRequestUrl(req);
 
@@ -87,7 +108,7 @@ export class WakeupServer {
       headers['Retry-After'] = String(refreshDelay);
     }
 
-    this.addCorsHeaders(req, headers);
+    this.addCorsHeaders(req, headers, serviceConfig);
     res.writeHead(statusCode, headers);
 
     if (contentType === 'application/json') {
@@ -171,12 +192,15 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
 
     console.log(`Received request for ${originalNamespace}/${originalService}`);
 
+    // Get per-service CORS config (falls back to controller defaults)
+    const serviceConfig = this.getServiceCorsConfig(originalNamespace, originalService);
+
     if (!this.store.isScaledDown(originalNamespace, originalService)) {
       console.warn(`Service ${originalNamespace}/${originalService} is not scaled down`);
       this.sendResponse(req, res, 404, 'Not Found', {
         message: 'Service not found in scaled-down state',
         service: originalService,
-      });
+      }, 0, null, serviceConfig);
       return;
     }
 
@@ -191,7 +215,7 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
         message: 'Checking client capabilities',
         service: originalService,
         status: 'tarpit_check',
-      }, tarpitDelay, this.tarpit.setCookieHeader(newCookie));
+      }, tarpitDelay, this.tarpit.setCookieHeader(newCookie), serviceConfig);
       return;
     }
 
@@ -207,7 +231,7 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
           service: originalService,
           status: 'tarpit_early',
           waitSeconds,
-        }, waitSeconds);
+        }, waitSeconds, null, serviceConfig);
         return;
       }
 
@@ -216,7 +240,7 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
         service: originalService,
         status: 'tarpit_invalid',
         reason: verification.reason,
-      });
+      }, 0, null, serviceConfig);
       return;
     }
 
@@ -226,7 +250,7 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
       this.sendResponse(req, res, 500, 'Internal Server Error', {
         message: 'Controller not initialized',
         service: originalService,
-      });
+      }, 0, null, serviceConfig);
       return;
     }
 
@@ -246,7 +270,7 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
         message: 'Wakeup operation timed out',
         service: originalService,
         status: 'wakeup_timeout',
-      });
+      }, 0, null, serviceConfig);
       return;
     }
 
@@ -255,14 +279,14 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
         message: `Service ${originalService} is waking up`,
         service: originalService,
         status: 'waking_up',
-      }, retryAfter);
+      }, retryAfter, null, serviceConfig);
       console.log(`Sent wakeup response for ${originalNamespace}/${originalService}`);
     } else {
       this.sendResponse(req, res, 500, 'Internal Server Error', {
         message: 'Failed to wake up service',
         service: originalService,
         status: 'wakeup_failed',
-      });
+      }, 0, null, serviceConfig);
     }
   }
 }

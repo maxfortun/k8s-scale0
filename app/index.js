@@ -30,6 +30,7 @@ const config = {
   tarpitDelaySeconds: parseIntSafe(process.env.TARPIT_DELAY_SECONDS, 3, 'TARPIT_DELAY_SECONDS'),
   tarpitCookieName: process.env.TARPIT_COOKIE_NAME || 'scale0_tarpit',
   corsAllowedOrigins: parseOriginAllowlist(process.env.CORS_ALLOWED_ORIGINS),
+  corsAllowCredentials: process.env.CORS_ALLOW_CREDENTIALS === 'true',
   wakeupTimeoutMs: parseIntSafe(process.env.WAKEUP_TIMEOUT_MS, 30000, 'WAKEUP_TIMEOUT_MS'),
 };
 
