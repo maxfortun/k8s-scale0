@@ -168,6 +168,44 @@ describe('WakeupServer', () => {
       expect(res.headers['access-control-allow-credentials']).toBe('true');
     });
 
+    it('should reflect origin when corsAllowCredentials is true but no allowlist', async () => {
+      await server.stop();
+      const credConfig = { ...defaultConfig, corsAllowCredentials: true };
+      server = new WakeupServer(mockK8s, store, credConfig);
+      server.setController(mockController);
+      await server.start();
+
+      await store.saveScaledDownState('test-ns', 'test-svc', { mode: 'hpa' });
+      const res = await makeRequest(server, {
+        headers: {
+          Origin: 'http://any-origin.com',
+          'x-scale0-original-service': 'test-svc',
+          'x-scale0-original-namespace': 'test-ns',
+          Accept: 'application/json',
+        },
+      });
+      expect(res.headers['access-control-allow-origin']).toBe('http://any-origin.com');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
+    it('should use per-service CORS config from state', async () => {
+      await store.saveScaledDownState('test-ns', 'test-svc', {
+        mode: 'hpa',
+        corsOrigins: ['http://service-specific.com'],
+        corsCredentials: true,
+      });
+      const res = await makeRequest(server, {
+        headers: {
+          Origin: 'http://service-specific.com',
+          'x-scale0-original-service': 'test-svc',
+          'x-scale0-original-namespace': 'test-ns',
+          Accept: 'application/json',
+        },
+      });
+      expect(res.headers['access-control-allow-origin']).toBe('http://service-specific.com');
+      expect(res.headers['access-control-allow-credentials']).toBe('true');
+    });
+
     it('should return first allowed origin when request origin not in list', async () => {
       await server.stop();
       const restrictedConfig = { ...defaultConfig, corsAllowedOrigins: ['http://allowed.com'] };

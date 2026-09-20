@@ -154,6 +154,56 @@ describe('K8sClient', () => {
     });
   });
 
+  describe('Service operations', () => {
+    beforeEach(async () => {
+      await k8s.init();
+      mockCoreApi.readNamespacedService = jest.fn();
+      mockCoreApi.patchNamespacedService = jest.fn();
+    });
+
+    it('getService should return service when found', async () => {
+      const mockService = { metadata: { name: 'svc' }, spec: { selector: {} } };
+      mockCoreApi.readNamespacedService.mockResolvedValue({ body: mockService });
+
+      const result = await k8s.getService('ns', 'svc');
+
+      expect(result).toEqual(mockService);
+      expect(mockCoreApi.readNamespacedService).toHaveBeenCalledWith('svc', 'ns');
+    });
+
+    it('getService should return null when not found', async () => {
+      mockCoreApi.readNamespacedService.mockRejectedValue({ response: { statusCode: 404 } });
+
+      const result = await k8s.getService('ns', 'svc');
+
+      expect(result).toBeNull();
+    });
+
+    it('getService should throw on other errors', async () => {
+      mockCoreApi.readNamespacedService.mockRejectedValue(new Error('Connection refused'));
+
+      await expect(k8s.getService('ns', 'svc')).rejects.toThrow('Connection refused');
+    });
+
+    it('patchServiceAnnotations should patch service', async () => {
+      mockCoreApi.patchNamespacedService.mockResolvedValue({ body: {} });
+
+      await k8s.patchServiceAnnotations('ns', 'svc', { 'test/annotation': 'value' });
+
+      expect(mockCoreApi.patchNamespacedService).toHaveBeenCalledWith(
+        'svc',
+        'ns',
+        { metadata: { annotations: { 'test/annotation': 'value' } } },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { headers: { 'Content-Type': 'application/merge-patch+json' } }
+      );
+    });
+  });
+
   describe('HPA operations', () => {
     beforeEach(async () => {
       await k8s.init();
@@ -349,6 +399,38 @@ describe('K8sClient', () => {
       expect(result).toBe(0);
     });
 
+    it('getWorkload should return ReplicaSet', async () => {
+      const mockRS = { metadata: { name: 'rs' }, spec: { replicas: 3 } };
+      mockAppsApi.readNamespacedReplicaSet.mockResolvedValue({ body: mockRS });
+
+      const result = await k8s.getWorkload('ns', 'ReplicaSet', 'rs');
+
+      expect(result).toEqual(mockRS);
+    });
+
+    it('getWorkload should return ReplicationController', async () => {
+      const mockRC = { metadata: { name: 'rc' }, spec: { replicas: 2 } };
+      mockCoreApi.readNamespacedReplicationController.mockResolvedValue({ body: mockRC });
+
+      const result = await k8s.getWorkload('ns', 'ReplicationController', 'rc');
+
+      expect(result).toEqual(mockRC);
+    });
+
+    it('getWorkload should return null on 404', async () => {
+      mockAppsApi.readNamespacedDeployment.mockRejectedValue({ response: { statusCode: 404 } });
+
+      const result = await k8s.getWorkload('ns', 'Deployment', 'deploy');
+
+      expect(result).toBeNull();
+    });
+
+    it('getWorkload should throw on other errors', async () => {
+      mockAppsApi.readNamespacedDeployment.mockRejectedValue(new Error('Connection refused'));
+
+      await expect(k8s.getWorkload('ns', 'Deployment', 'deploy')).rejects.toThrow('Connection refused');
+    });
+
     it('scaleWorkload should scale Deployment', async () => {
       mockAppsApi.patchNamespacedDeployment.mockResolvedValue({ body: {} });
 
@@ -364,6 +446,48 @@ describe('K8sClient', () => {
         undefined,
         undefined,
         undefined,
+        { headers: { 'Content-Type': 'application/merge-patch+json' } }
+      );
+    });
+
+    it('scaleWorkload should scale StatefulSet', async () => {
+      mockAppsApi.patchNamespacedStatefulSet.mockResolvedValue({ body: {} });
+
+      await k8s.scaleWorkload('ns', 'StatefulSet', 'sts', 2);
+
+      expect(mockAppsApi.patchNamespacedStatefulSet).toHaveBeenCalledWith(
+        'sts',
+        'ns',
+        { spec: { replicas: 2 } },
+        undefined, undefined, undefined, undefined, undefined,
+        { headers: { 'Content-Type': 'application/merge-patch+json' } }
+      );
+    });
+
+    it('scaleWorkload should scale ReplicaSet', async () => {
+      mockAppsApi.patchNamespacedReplicaSet.mockResolvedValue({ body: {} });
+
+      await k8s.scaleWorkload('ns', 'ReplicaSet', 'rs', 1);
+
+      expect(mockAppsApi.patchNamespacedReplicaSet).toHaveBeenCalledWith(
+        'rs',
+        'ns',
+        { spec: { replicas: 1 } },
+        undefined, undefined, undefined, undefined, undefined,
+        { headers: { 'Content-Type': 'application/merge-patch+json' } }
+      );
+    });
+
+    it('scaleWorkload should scale ReplicationController', async () => {
+      mockCoreApi.patchNamespacedReplicationController.mockResolvedValue({ body: {} });
+
+      await k8s.scaleWorkload('ns', 'ReplicationController', 'rc', 0);
+
+      expect(mockCoreApi.patchNamespacedReplicationController).toHaveBeenCalledWith(
+        'rc',
+        'ns',
+        { spec: { replicas: 0 } },
+        undefined, undefined, undefined, undefined, undefined,
         { headers: { 'Content-Type': 'application/merge-patch+json' } }
       );
     });

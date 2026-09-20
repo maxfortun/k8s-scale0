@@ -5,6 +5,7 @@ function createMockK8s() {
   return {
     patchServiceAnnotations: jest.fn().mockResolvedValue({}),
     listServicesWithLabel: jest.fn().mockResolvedValue([]),
+    getService: jest.fn().mockResolvedValue(null),
   };
 }
 
@@ -57,6 +58,14 @@ describe('Store', () => {
     });
   });
 
+  describe('setK8sClient', () => {
+    it('should set the K8s client after construction', () => {
+      const mockK8s = { test: true };
+      store.setK8sClient(mockK8s);
+      expect(store.k8s).toBe(mockK8s);
+    });
+  });
+
   describe('activity tracking', () => {
     it('should record and retrieve activity', () => {
       const before = Date.now();
@@ -82,6 +91,28 @@ describe('Store', () => {
       const second = store.getLastActivity('ns', 'svc');
 
       expect(second).toBeGreaterThan(first);
+    });
+
+    it('should stop tracking a service', () => {
+      store.recordActivity('ns', 'svc');
+      expect(store.getLastActivity('ns', 'svc')).toBeDefined();
+
+      store.stopTracking('ns', 'svc');
+      expect(store.getLastActivity('ns', 'svc')).toBeUndefined();
+    });
+
+    it('should prune stale tracking entries', () => {
+      store.recordActivity('ns1', 'svc1');
+      store.recordActivity('ns1', 'svc2');
+      store.recordActivity('ns2', 'svc1');
+
+      // Only ns1/svc1 is active
+      const activeKeys = [store.key('ns1', 'svc1')];
+      store.pruneStaleTracking(activeKeys);
+
+      expect(store.getLastActivity('ns1', 'svc1')).toBeDefined();
+      expect(store.getLastActivity('ns1', 'svc2')).toBeUndefined();
+      expect(store.getLastActivity('ns2', 'svc1')).toBeUndefined();
     });
   });
 
@@ -351,6 +382,147 @@ describe('Store', () => {
         .resolves.not.toThrow();
 
       expect(persistentStore.isScaledDown('ns', 'svc')).toBe(true);
+    });
+
+    it('should handle removeScaledDownState K8s errors gracefully', async () => {
+      await persistentStore.saveScaledDownState('ns', 'svc', { mode: 'test' });
+      mockK8s.patchServiceAnnotations.mockRejectedValue(new Error('API error'));
+
+      await expect(persistentStore.removeScaledDownState('ns', 'svc'))
+        .resolves.not.toThrow();
+
+      // State should still be removed from memory
+      expect(persistentStore.isScaledDown('ns', 'svc')).toBe(false);
+    });
+
+    it('should handle recoverStateFromServices with no K8s client', async () => {
+      const localStore = new Store();
+      const recovered = await localStore.recoverStateFromServices();
+      expect(recovered).toBe(0);
+    });
+
+    it('should handle recoverStateFromServices K8s errors', async () => {
+      mockK8s.listServicesWithLabel.mockRejectedValue(new Error('API error'));
+
+      const recovered = await persistentStore.recoverStateFromServices();
+      expect(recovered).toBe(0);
+    });
+
+    it('should warn on large annotation size', async () => {
+      const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
+
+      // Create a large state object (> 200KB)
+      const largeState = { data: 'x'.repeat(250000) };
+      await persistentStore.saveScaledDownState('ns', 'svc', largeState);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('approaching K8s annotation limit')
+      );
+      consoleSpy.mockRestore();
+    });
+
+    describe('isScaledDownAsync', () => {
+      it('should return true if in memory', async () => {
+        await persistentStore.saveScaledDownState('ns', 'svc', { mode: 'test' });
+        const result = await persistentStore.isScaledDownAsync('ns', 'svc');
+        expect(result).toBe(true);
+      });
+
+      it('should check annotation if not in memory', async () => {
+        const savedState = { scaleMode: 'hpa', scaledDownAt: Date.now() };
+        mockK8s.getService.mockResolvedValue({
+          metadata: {
+            annotations: { 'scale0/scaled-down-state': JSON.stringify(savedState) },
+          },
+        });
+
+        const result = await persistentStore.isScaledDownAsync('ns', 'svc');
+        expect(result).toBe(true);
+        expect(mockK8s.getService).toHaveBeenCalledWith('ns', 'svc');
+        // Should also cache the state
+        expect(persistentStore.isScaledDown('ns', 'svc')).toBe(true);
+      });
+
+      it('should return false if service not found', async () => {
+        mockK8s.getService.mockResolvedValue(null);
+        const result = await persistentStore.isScaledDownAsync('ns', 'svc');
+        expect(result).toBe(false);
+      });
+
+      it('should return false if no annotation', async () => {
+        mockK8s.getService.mockResolvedValue({
+          metadata: { annotations: {} },
+        });
+        const result = await persistentStore.isScaledDownAsync('ns', 'svc');
+        expect(result).toBe(false);
+      });
+
+      it('should handle K8s errors gracefully', async () => {
+        mockK8s.getService.mockRejectedValue(new Error('API error'));
+        const result = await persistentStore.isScaledDownAsync('ns', 'svc');
+        expect(result).toBe(false);
+      });
+    });
+
+    describe('getScaledDownStateAsync', () => {
+      it('should return state from memory if available', async () => {
+        await persistentStore.saveScaledDownState('ns', 'svc', { mode: 'test' });
+        const state = await persistentStore.getScaledDownStateAsync('ns', 'svc');
+        expect(state.mode).toBe('test');
+      });
+
+      it('should fetch state from annotation if not in memory', async () => {
+        const savedState = { scaleMode: 'hpa', scaledDownAt: Date.now() };
+        mockK8s.getService.mockResolvedValue({
+          metadata: {
+            annotations: { 'scale0/scaled-down-state': JSON.stringify(savedState) },
+          },
+        });
+
+        const state = await persistentStore.getScaledDownStateAsync('ns', 'svc');
+        expect(state.scaleMode).toBe('hpa');
+        // Should cache it
+        expect(persistentStore.getScaledDownState('ns', 'svc')).toEqual(savedState);
+      });
+
+      it('should return null if not found anywhere', async () => {
+        mockK8s.getService.mockResolvedValue(null);
+        const state = await persistentStore.getScaledDownStateAsync('ns', 'svc');
+        expect(state).toBeNull();
+      });
+    });
+
+    describe('fetchStateFromAnnotation', () => {
+      it('should return null if service not found', async () => {
+        mockK8s.getService.mockResolvedValue(null);
+        const state = await persistentStore.fetchStateFromAnnotation('ns', 'svc');
+        expect(state).toBeNull();
+      });
+
+      it('should return null if no annotation', async () => {
+        mockK8s.getService.mockResolvedValue({
+          metadata: {},
+        });
+        const state = await persistentStore.fetchStateFromAnnotation('ns', 'svc');
+        expect(state).toBeNull();
+      });
+
+      it('should handle corrupted JSON annotation', async () => {
+        const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
+        mockK8s.getService.mockResolvedValue({
+          metadata: {
+            annotations: { 'scale0/scaled-down-state': 'not-json' },
+          },
+        });
+
+        const state = await persistentStore.fetchStateFromAnnotation('ns', 'svc');
+        expect(state).toBeNull();
+        expect(consoleSpy).toHaveBeenCalledWith(
+          expect.stringContaining('Corrupted state annotation'),
+          expect.any(String)
+        );
+        consoleSpy.mockRestore();
+      });
     });
   });
 });

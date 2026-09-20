@@ -118,6 +118,32 @@ describe('Controller', () => {
     });
   });
 
+  describe('trackDiscovery', () => {
+    it('should return true for new discoveries', () => {
+      expect(controller.trackDiscovery('test-key')).toBe(true);
+    });
+
+    it('should return false for duplicate discoveries', () => {
+      controller.trackDiscovery('test-key');
+      expect(controller.trackDiscovery('test-key')).toBe(false);
+    });
+
+    it('should clear discoveries when limit reached', () => {
+      // Set a low limit for testing
+      controller.maxLoggedDiscoveries = 3;
+
+      controller.trackDiscovery('key1');
+      controller.trackDiscovery('key2');
+      controller.trackDiscovery('key3');
+
+      // This should trigger the clear
+      expect(controller.trackDiscovery('key4')).toBe(true);
+
+      // Old keys should now be trackable again
+      expect(controller.trackDiscovery('key1')).toBe(true);
+    });
+  });
+
   describe('reconcile', () => {
     it('should list services with correct label selector', async () => {
       await controller.reconcile();
@@ -153,6 +179,42 @@ describe('Controller', () => {
     const createService = (namespace, name, labels = {}, annotations = {}, selector = { app: 'test' }) => ({
       metadata: { namespace, name, labels, annotations },
       spec: { selector },
+    });
+
+    describe('config parsing', () => {
+      it('should use default scale-in-after for invalid values', async () => {
+        const svc = createService('ns', 'svc', { 'scale0/scale-in-after': 'invalid' });
+        mockK8s.findVirtualServicesForService.mockResolvedValue([{ metadata: { name: 'vs' } }]);
+        mockK8s.findHPAForService.mockResolvedValue({ metadata: { name: 'hpa' } });
+
+        await controller.processService(svc);
+
+        // Should use default without error
+        expect(store.getLastActivity('ns', 'svc')).toBeDefined();
+      });
+
+      it('should use default scale-in-after for negative values', async () => {
+        const svc = createService('ns', 'svc', { 'scale0/scale-in-after': '-100' });
+        mockK8s.findVirtualServicesForService.mockResolvedValue([{ metadata: { name: 'vs' } }]);
+        mockK8s.findHPAForService.mockResolvedValue({ metadata: { name: 'hpa' } });
+
+        await controller.processService(svc);
+
+        expect(store.getLastActivity('ns', 'svc')).toBeDefined();
+      });
+
+      it('should parse CORS origins from annotation', async () => {
+        const svc = createService('ns', 'svc', {}, {
+          'scale0/cors-origins': 'http://a.com, http://b.com',
+          'scale0/cors-credentials': 'true',
+        });
+        mockK8s.findVirtualServicesForService.mockResolvedValue([{ metadata: { name: 'vs' } }]);
+        mockK8s.findHPAForService.mockResolvedValue({ metadata: { name: 'hpa' } });
+
+        await controller.processService(svc);
+
+        expect(store.getLastActivity('ns', 'svc')).toBeDefined();
+      });
     });
 
     describe('HPA mode', () => {
