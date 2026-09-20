@@ -62,9 +62,17 @@ export class Controller {
       const labelSelector = `${this.config.labelPrefix}/enabled=true`;
       const services = await this.k8s.listServicesWithLabel(labelSelector);
 
+      // Track active service keys to prune stale activity tracking
+      const activeKeys = services.map(svc =>
+        `${svc.metadata.namespace}\x00${svc.metadata.name}`
+      );
+
       for (const svc of services) {
         await this.processService(svc);
       }
+
+      // Prune tracking for services that no longer have scale0 enabled
+      this.store.pruneStaleTracking(activeKeys);
     } catch (err) {
       console.error('Reconcile error:', err.message);
     }
@@ -272,6 +280,8 @@ export class Controller {
         corsCredentials: corsConfig.corsCredentials || false,
       };
 
+      // Gather workload info before modifying anything
+      let workloadInfo = null;
       if (scaleMode === 'hpa') {
         const hpa = await this.k8s.getHPA(namespace, scaleTarget.name);
         if (!hpa) {
@@ -293,10 +303,7 @@ export class Controller {
           apiVersion: scaleTargetRef.apiVersion,
           replicas: currentReplicas,
         };
-
-        // Scale workload to 0 (HPA will be ignored when replicas=0)
-        await this.k8s.scaleWorkload(namespace, scaleTargetRef.kind, scaleTargetRef.name, 0);
-        console.log(`Scaled ${scaleTargetRef.kind} ${namespace}/${scaleTargetRef.name} to 0 (HPA: ${scaleTarget.name})`);
+        workloadInfo = { kind: scaleTargetRef.kind, name: scaleTargetRef.name, hpaName: scaleTarget.name };
 
       } else if (scaleMode === 'workload') {
         originalState.workload = {
@@ -304,36 +311,40 @@ export class Controller {
           name: scaleTarget.name,
           replicas: scaleTarget.replicas,
         };
-
-        // Scale workload to 0
-        await this.k8s.scaleWorkload(namespace, scaleTarget.kind, scaleTarget.name, 0);
-        console.log(`Scaled ${scaleTarget.kind} ${namespace}/${scaleTarget.name} to 0`);
+        workloadInfo = { kind: scaleTarget.kind, name: scaleTarget.name };
 
       } else if (scaleMode === 'pod') {
         originalState.pods = scaleTarget.pods.map(p => ({
           name: p.name,
           spec: JSON.parse(JSON.stringify(p.pod)),
         }));
-
-        // Delete pods
-        for (const pod of scaleTarget.pods) {
-          await this.k8s.deletePod(namespace, pod.name);
-          console.log(`Deleted pod ${namespace}/${pod.name}`);
-        }
       }
 
-      // Modify all VirtualServices to route to scale0 (using already-fetched objects)
+      // IMPORTANT: Redirect traffic BEFORE scaling down to prevent traffic hitting missing pods
+      // Modify all VirtualServices to route to scale0
       for (const vs of fetchedVirtualServices) {
         const modifiedVs = this.createScale0VirtualService(vs, serviceName);
         await this.k8s.replaceVirtualService(namespace, vs.metadata.name, modifiedVs);
         console.log(`Redirected VirtualService ${namespace}/${vs.metadata.name} to scale0`);
       }
 
-      // Modify all HTTPRoutes to route to scale0 (using already-fetched objects)
+      // Modify all HTTPRoutes to route to scale0
       for (const route of fetchedHTTPRoutes) {
         const modifiedRoute = this.createScale0HTTPRoute(route, serviceName);
         await this.k8s.replaceHTTPRoute(namespace, route.metadata.name, modifiedRoute);
         console.log(`Redirected HTTPRoute ${namespace}/${route.metadata.name} to scale0`);
+      }
+
+      // Now scale down the workload (traffic already redirected)
+      if (scaleMode === 'hpa' || scaleMode === 'workload') {
+        await this.k8s.scaleWorkload(namespace, workloadInfo.kind, workloadInfo.name, 0);
+        const hpaNote = workloadInfo.hpaName ? ` (HPA: ${workloadInfo.hpaName})` : '';
+        console.log(`Scaled ${workloadInfo.kind} ${namespace}/${workloadInfo.name} to 0${hpaNote}`);
+      } else if (scaleMode === 'pod') {
+        for (const pod of scaleTarget.pods) {
+          await this.k8s.deletePod(namespace, pod.name);
+          console.log(`Deleted pod ${namespace}/${pod.name}`);
+        }
       }
 
       // Save state (persists to Service annotation)

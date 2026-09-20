@@ -35,6 +35,20 @@ export class Store {
     return this.lastActivity.get(this.key(namespace, name));
   }
 
+  stopTracking(namespace, name) {
+    this.lastActivity.delete(this.key(namespace, name));
+  }
+
+  pruneStaleTracking(activeServiceKeys) {
+    // Remove tracking for services no longer in the active set
+    const activeSet = new Set(activeServiceKeys);
+    for (const key of this.lastActivity.keys()) {
+      if (!activeSet.has(key)) {
+        this.lastActivity.delete(key);
+      }
+    }
+  }
+
   isScaledDown(namespace, name) {
     return this.scaledDownApps.has(this.key(namespace, name));
   }
@@ -82,6 +96,10 @@ export class Store {
     if (this.k8s) {
       try {
         const stateJson = JSON.stringify(stateWithTimestamp);
+        // Kubernetes annotations have a 256KB total limit per object
+        if (stateJson.length > 200000) {
+          console.warn(`State for ${namespace}/${name} is ${stateJson.length} bytes - approaching K8s annotation limit`);
+        }
         await this.k8s.patchServiceAnnotations(namespace, name, {
           [STATE_ANNOTATION]: stateJson,
         });
