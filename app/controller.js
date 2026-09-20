@@ -1,3 +1,5 @@
+import { metrics } from './metrics.js';
+
 export class Controller {
   constructor(k8s, store, config) {
     this.k8s = k8s;
@@ -58,6 +60,7 @@ export class Controller {
   }
 
   async reconcile() {
+    const endTimer = metrics.reconcileDuration.startTimer();
     try {
       const labelSelector = `${this.config.labelPrefix}/enabled=true`;
       const services = await this.k8s.listServicesWithLabel(labelSelector);
@@ -73,8 +76,15 @@ export class Controller {
 
       // Prune tracking for services that no longer have scale0 enabled
       this.store.pruneStaleTracking(activeKeys);
+
+      // Update metrics
+      metrics.servicesTracked.set(this.store.getAllTracked().length);
+      metrics.servicesScaledDown.set(this.store.getAllScaledDown().length);
+      metrics.activeLeases.set(this.activeLeases.size);
     } catch (err) {
       console.error('Reconcile error:', err.message);
+    } finally {
+      endTimer();
     }
   }
 
@@ -228,6 +238,8 @@ export class Controller {
       console.log(`Could not acquire scale-down lease for ${lockKey}, another instance is handling it`);
       return;
     }
+
+    const endTimer = metrics.scaledownDuration.startTimer({ namespace, service: serviceName, mode: scaleMode });
     this.activeLeases.set(`${namespace}/${leaseName}`, true);
 
     this.scalingDown.add(lockKey);
@@ -351,12 +363,16 @@ export class Controller {
       await this.store.saveScaledDownState(namespace, serviceName, originalState);
       const targetDesc = scaleMode === 'pod' ? `${originalState.pods.length} pod(s)` : `${originalState.workload.kind}/${originalState.workload.name}`;
       console.log(`Service ${namespace}/${serviceName} (${targetDesc}) scaled down successfully`);
+
+      metrics.scaledownsTotal.inc({ namespace, service: serviceName, mode: scaleMode });
     } catch (err) {
       console.error(`Failed to scale down ${namespace}/${serviceName}:`, err.message);
       if (err.response?.body) {
         console.error('Response body:', JSON.stringify(err.response.body));
       }
+      metrics.scaledownErrorsTotal.inc({ namespace, service: serviceName });
     } finally {
+      endTimer();
       this.scalingDown.delete(`${namespace}/${serviceName}`);
       await this.k8s.releaseLease(namespace, leaseName);
       this.activeLeases.delete(`${namespace}/${leaseName}`);
@@ -455,9 +471,10 @@ export class Controller {
     this.activeLeases.set(`${namespace}/${leaseName}`, true);
 
     this.wakingUp.add(lockKey);
+    const scaleMode = state.scaleMode || 'hpa'; // backwards compatibility
+    const endTimer = metrics.wakeupDuration.startTimer({ namespace, service: serviceName, mode: scaleMode });
 
     try {
-      const scaleMode = state.scaleMode || 'hpa'; // backwards compatibility
 
       if (scaleMode === 'hpa' && state.workload) {
         // Scale workload back up - HPA will take over once replicas > 0
@@ -539,11 +556,15 @@ export class Controller {
         targetDesc = ` (${state.pods.length} pod(s))`;
       }
       console.log(`Service ${namespace}/${serviceName}${targetDesc} woken up successfully`);
+
+      metrics.wakeupsTotal.inc({ namespace, service: serviceName, mode: scaleMode });
       return true;
     } catch (err) {
       console.error(`Failed to wake up ${namespace}/${serviceName}:`, err.message);
+      metrics.wakeupErrorsTotal.inc({ namespace, service: serviceName });
       return false;
     } finally {
+      endTimer();
       this.wakingUp.delete(`${namespace}/${serviceName}`);
       await this.k8s.releaseLease(namespace, leaseName);
       this.activeLeases.delete(`${namespace}/${leaseName}`);

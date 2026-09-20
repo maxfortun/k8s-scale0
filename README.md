@@ -162,6 +162,54 @@ kubectl get svc my-app -o jsonpath='{.metadata.annotations.scale0/scaled-down-st
 - `GET /healthz` - Liveness probe
 - `GET /readyz` - Readiness probe
 - `GET /status` - Current state of tracked/scaled-down services
+- `GET /metrics` - Prometheus metrics
+
+## Prometheus Metrics
+
+The controller exposes Prometheus metrics at `/metrics`:
+
+### Counters
+
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `scale0_scaledowns_total` | namespace, service, mode | Total successful scale-down operations |
+| `scale0_wakeups_total` | namespace, service, mode | Total successful wakeup operations |
+| `scale0_scaledown_errors_total` | namespace, service | Failed scale-down operations |
+| `scale0_wakeup_errors_total` | namespace, service | Failed wakeup operations |
+| `scale0_tarpit_checks_total` | result | Tarpit verification attempts (new/early/invalid/pass) |
+| `scale0_wakeup_requests_total` | status_code | Wakeup HTTP requests by response code |
+
+### Gauges
+
+| Metric | Description |
+|--------|-------------|
+| `scale0_services_tracked` | Services currently being monitored |
+| `scale0_services_scaled_down` | Services currently in scaled-down state |
+| `scale0_active_leases` | Currently held distributed leases |
+
+### Histograms
+
+| Metric | Labels | Buckets (seconds) | Description |
+|--------|--------|-------------------|-------------|
+| `scale0_scaledown_duration_seconds` | namespace, service, mode | 0.1, 0.5, 1, 2, 5, 10, 30, 60 | Duration of scale-down operations |
+| `scale0_wakeup_duration_seconds` | namespace, service, mode | 0.1, 0.5, 1, 2, 5, 10, 30, 60 | Duration of wakeup operations |
+| `scale0_reconcile_duration_seconds` | - | 0.01, 0.05, 0.1, 0.5, 1, 2, 5 | Duration of reconciliation loop iterations |
+
+### Scrape Config
+
+```yaml
+scrape_configs:
+  - job_name: 'scale0'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        regex: scale0
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        regex: "8080"
+        action: keep
+```
 
 ## Tarpit
 

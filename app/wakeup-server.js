@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { Tarpit } from './tarpit.js';
+import { metrics } from './metrics.js';
 
 export class WakeupServer {
   constructor(k8s, store, config) {
@@ -202,6 +203,18 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
       return;
     }
 
+    if (req.url === '/metrics') {
+      try {
+        const metricsOutput = await metrics.getMetrics();
+        res.writeHead(200, { 'Content-Type': metrics.getContentType() });
+        res.end(metricsOutput);
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Error collecting metrics');
+      }
+      return;
+    }
+
     const originalService = req.headers['x-scale0-original-service'];
     const originalNamespace = req.headers['x-scale0-original-namespace'];
 
@@ -237,6 +250,8 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
       console.log(`First request for ${originalNamespace}/${originalService}, setting tarpit cookie`);
       const newCookie = this.tarpit.generate();
       const isSecure = this.isSecureRequest(req);
+      metrics.tarpitChecksTotal.inc({ result: 'new' });
+      metrics.wakeupRequestsTotal.inc({ status_code: '503' });
       this.sendResponse(req, res, 503, 'Service Unavailable', {
         message: 'Checking client capabilities',
         service: originalService,
@@ -252,6 +267,8 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
 
       if (verification.reason === 'early') {
         const waitSeconds = Math.ceil(verification.remainingMs / 1000);
+        metrics.tarpitChecksTotal.inc({ result: 'early' });
+        metrics.wakeupRequestsTotal.inc({ status_code: '418' });
         this.sendResponse(req, res, 418, "I'm a teapot", {
           message: 'Request arrived too early. Please wait and retry.',
           service: originalService,
@@ -261,6 +278,8 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
         return;
       }
 
+      metrics.tarpitChecksTotal.inc({ result: 'invalid' });
+      metrics.wakeupRequestsTotal.inc({ status_code: '418' });
       this.sendResponse(req, res, 418, "I'm a teapot", {
         message: 'Invalid request signature',
         service: originalService,
@@ -270,6 +289,7 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
       return;
     }
 
+    metrics.tarpitChecksTotal.inc({ result: 'pass' });
     console.log(`Tarpit verified, waking up ${originalNamespace}/${originalService}`);
 
     if (!this.controller) {
@@ -305,6 +325,7 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
       });
 
     // Return immediately - client will retry via Refresh header
+    metrics.wakeupRequestsTotal.inc({ status_code: '503' });
     this.sendResponse(req, res, 503, 'Service Starting', {
       message: `Service ${originalService} is waking up`,
       service: originalService,
