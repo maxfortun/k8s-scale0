@@ -29,6 +29,27 @@ export class K8sClient {
     return body.items;
   }
 
+  async getService(namespace, name) {
+    try {
+      const { body } = await this.coreApi.readNamespacedService({ namespace, name });
+      return body;
+    } catch (err) {
+      if (err.response?.statusCode === 404) return null;
+      throw err;
+    }
+  }
+
+  async patchServiceAnnotations(namespace, name, annotations) {
+    const { body } = await this.coreApi.patchNamespacedService({
+      namespace,
+      name,
+      body: { metadata: { annotations } },
+    }, {
+      headers: { 'Content-Type': 'application/merge-patch+json' },
+    });
+    return body;
+  }
+
   async getHPA(namespace, name) {
     try {
       const { body } = await this.autoscalingApi.readNamespacedHorizontalPodAutoscaler({ namespace, name });

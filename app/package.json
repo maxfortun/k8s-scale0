@@ -6,18 +6,28 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
+    "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch",
+    "test:unit": "NODE_OPTIONS='--experimental-vm-modules' jest --testPathPattern='__tests__/unit'",
+    "test:integration": "NODE_OPTIONS='--experimental-vm-modules' jest --testPathPattern='__tests__/integration'",
+    "lint": "eslint *.js __tests__/**/*.js"
   },
   "keywords": [
     "kubernetes",
     "scale-to-zero",
     "istio",
     "hpa",
-    "virtualservice"
+    "virtualservice",
+    "gateway-api"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@kubernetes/client-node": "^0.20.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "eslint": "^8.57.0"
   }
 }

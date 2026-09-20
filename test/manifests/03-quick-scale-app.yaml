@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quick-scale-app
+  namespace: scale0-test
+  labels:
+    app: quick-scale
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quick-scale
+  template:
+    metadata:
+      labels:
+        app: quick-scale
+    spec:
+      containers:
+        - name: httpbin
+          image: kennethreitz/httpbin:latest
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: quick-scale-app
+  namespace: scale0-test
+  labels:
+    scale0/enabled: "true"
+    scale0/scale-in-after: "30"
+  annotations:
+    description: "Scales down after 30 seconds of inactivity for testing"
+spec:
+  selector:
+    app: quick-scale
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: quick-scale-app
+  namespace: scale0-test
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: quick-scale-app
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: quick-scale-vs
+  namespace: scale0-test
+spec:
+  hosts:
+    - quick-scale.example.com
+  gateways:
+    - test-gateway
+  http:
+    - route:
+        - destination:
+            host: quick-scale-app
+            port:
+              number: 80

@@ -91,6 +91,22 @@ Environment variables:
 | `TARPIT_SECRET` | (random) | HMAC secret for tarpit cookie signatures |
 | `TARPIT_DELAY_SECONDS` | 3 | Minimum wait time before retry is accepted |
 | `TARPIT_COOKIE_NAME` | scale0_tarpit | Cookie name for tarpit token |
+| `CORS_ALLOWED_ORIGINS` | (none) | Comma-separated list of allowed CORS origins |
+| `WAKEUP_TIMEOUT_MS` | 30000 | Timeout for wakeup operations |
+
+**Security note:** Set `TARPIT_SECRET` explicitly in production. If not set, a random secret is generated, and tarpit cookies become invalid on pod restart.
+
+## State Persistence
+
+Scaled-down state is persisted to Service annotations (`scale0/scaled-down-state`). This means:
+
+- **Survives pod restarts**: On startup, the controller recovers state from Service annotations
+- **No external dependencies**: State lives in Kubernetes, no Redis/etcd needed
+- **Visible state**: You can inspect the annotation to see the original configuration
+
+```bash
+kubectl get svc my-app -o jsonpath='{.metadata.annotations.scale0/scaled-down-state}' | jq
+```
 
 ## Endpoints
 
@@ -113,6 +129,26 @@ The cookie contains:
 - `sig`: HMAC-SHA256 of the payload
 
 Legitimate browsers follow Refresh headers and support cookies. Bots that ignore either get blocked.
+
+## Testing
+
+```bash
+cd app
+
+# Run all tests with coverage
+npm test
+
+# Run unit tests only
+npm run test:unit
+
+# Run integration tests only
+npm run test:integration
+
+# Watch mode for development
+npm run test:watch
+```
+
+Test workloads with short timeframes (30-120 seconds) are available in `test/manifests/` for testing in a real cluster.
 
 ## Requirements
 

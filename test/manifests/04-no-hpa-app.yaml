@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: no-hpa-app
+  namespace: scale0-test
+  labels:
+    app: no-hpa
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: no-hpa
+  template:
+    metadata:
+      labels:
+        app: no-hpa
+    spec:
+      containers:
+        - name: echo
+          image: ealen/echo-server:latest
+          ports:
+            - containerPort: 80
+          env:
+            - name: PORT
+              value: "80"
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: no-hpa-app
+  namespace: scale0-test
+  labels:
+    scale0/enabled: "true"
+    scale0/scale-in-after: "90"
+  annotations:
+    description: "Workload without HPA - scales deployment directly"
+spec:
+  selector:
+    app: no-hpa
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: no-hpa-vs
+  namespace: scale0-test
+spec:
+  hosts:
+    - no-hpa.example.com
+  gateways:
+    - test-gateway
+  http:
+    - route:
+        - destination:
+            host: no-hpa-app
+            port:
+              number: 80

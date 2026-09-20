@@ -2,8 +2,20 @@ import crypto from 'node:crypto';
 
 export class Tarpit {
   constructor(config) {
-    this.secret = config.tarpitSecret || process.env.TARPIT_SECRET || crypto.randomBytes(32).toString('hex');
-    this.delaySeconds = config.tarpitDelaySeconds || parseInt(process.env.TARPIT_DELAY_SECONDS || '3', 10);
+    const providedSecret = config.tarpitSecret || process.env.TARPIT_SECRET;
+    if (!providedSecret) {
+      console.warn(
+        'WARNING: TARPIT_SECRET not configured. Using ephemeral secret. ' +
+        'Tarpit cookies will become invalid on pod restart. ' +
+        'Set TARPIT_SECRET env var for production use.'
+      );
+      this.secret = crypto.randomBytes(32).toString('hex');
+      this.isEphemeral = true;
+    } else {
+      this.secret = providedSecret;
+      this.isEphemeral = false;
+    }
+    this.delaySeconds = config.tarpitDelaySeconds ?? 3;
     this.cookieName = config.tarpitCookieName || 'scale0_tarpit';
   }
 

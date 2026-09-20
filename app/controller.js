@@ -258,8 +258,8 @@ export class Controller {
         }
       }
 
-      // Save state
-      this.store.saveScaledDownState(namespace, serviceName, originalState);
+      // Save state (persists to Service annotation)
+      await this.store.saveScaledDownState(namespace, serviceName, originalState);
       const targetDesc = scaleMode === 'pod' ? `${originalState.pods.length} pod(s)` : `${originalState.workload.kind}/${originalState.workload.name}`;
       console.log(`Service ${namespace}/${serviceName} (${targetDesc}) scaled down successfully`);
     } catch (err) {
@@ -401,9 +401,9 @@ export class Controller {
         }
       }
 
-      // Update tracking
+      // Update tracking (removes annotation from Service)
       this.store.recordActivity(namespace, serviceName);
-      this.store.removeScaledDownState(namespace, serviceName);
+      await this.store.removeScaledDownState(namespace, serviceName);
 
       let targetDesc = '';
       if (state.workload) {

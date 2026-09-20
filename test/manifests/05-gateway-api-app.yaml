@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-api-app
+  namespace: scale0-test
+  labels:
+    app: gateway-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway-api
+  template:
+    metadata:
+      labels:
+        app: gateway-api
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-api-app
+  namespace: scale0-test
+  labels:
+    scale0/enabled: "true"
+    scale0/scale-in-after: "120"
+  annotations:
+    description: "Uses Gateway API HTTPRoute instead of Istio VirtualService"
+spec:
+  selector:
+    app: gateway-api
+  ports:
+    - port: 80
+      targetPort: 80
+      name: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway-api-app
+  namespace: scale0-test
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway-api-app
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: gateway-api-route
+  namespace: scale0-test
+spec:
+  parentRefs:
+    - name: test-gateway
+      namespace: scale0-test
+  hostnames:
+    - gateway-api.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - kind: Service
+          name: gateway-api-app
+          port: 80

@@ -50,12 +50,23 @@ export class WakeupServer {
   }
 
   addCorsHeaders(req, headers) {
-    const origin = req.headers.origin || '*';
-    headers['Access-Control-Allow-Origin'] = origin;
+    const origin = req.headers.origin;
+    const allowedOrigins = this.config.corsAllowedOrigins;
+
+    if (allowedOrigins && allowedOrigins.length > 0) {
+      if (origin && allowedOrigins.includes(origin)) {
+        headers['Access-Control-Allow-Origin'] = origin;
+        headers['Access-Control-Allow-Credentials'] = 'true';
+      } else {
+        headers['Access-Control-Allow-Origin'] = allowedOrigins[0];
+      }
+    } else {
+      headers['Access-Control-Allow-Origin'] = '*';
+    }
+
     headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
-    headers['Access-Control-Allow-Credentials'] = 'true';
-    headers['Access-Control-Allow-Headers'] = Object.keys(headers).join(',');
-    headers['Access-Control-Expose-Headers'] = Object.keys(headers).join(',');
+    headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept, X-Requested-With';
+    headers['Access-Control-Expose-Headers'] = 'Refresh, Retry-After, Set-Cookie';
   }
 
   sendResponse(req, res, statusCode, statusMessage, body, refreshDelay = 0, setCookie = null) {
@@ -219,7 +230,25 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
       return;
     }
 
-    const success = await this.controller.wakeUp(originalNamespace, originalService);
+    const timeoutMs = this.config.wakeupTimeoutMs || 30000;
+    let success = false;
+
+    try {
+      success = await Promise.race([
+        this.controller.wakeUp(originalNamespace, originalService),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Wakeup timeout')), timeoutMs)
+        ),
+      ]);
+    } catch (err) {
+      console.error(`Wakeup error for ${originalNamespace}/${originalService}:`, err.message);
+      this.sendResponse(req, res, 504, 'Gateway Timeout', {
+        message: 'Wakeup operation timed out',
+        service: originalService,
+        status: 'wakeup_timeout',
+      });
+      return;
+    }
 
     if (success) {
       this.sendResponse(req, res, 503, 'Service Starting', {
