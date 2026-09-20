@@ -197,6 +197,12 @@ function createMockK8s() {
       pods.set(`${ns}/${pod.metadata.name}`, pod);
       return pod;
     }),
+
+    getService: jest.fn(async (ns, name) => services.get(`${ns}/${name}`) || null),
+
+    // Lease methods for distributed locking
+    acquireLease: jest.fn(async () => true),
+    releaseLease: jest.fn(async () => {}),
   };
 }
 
@@ -297,9 +303,9 @@ describe('Full Scale-Down/Wake-Up Cycle', () => {
       await controller.reconcile();
 
       expect(store.isScaledDown('test-ns', 'my-app')).toBe(true);
-      const hpa = await mockK8s.getHPA('test-ns', 'my-app');
-      expect(hpa.spec.minReplicas).toBe(0);
-      expect(hpa.spec.maxReplicas).toBe(0);
+      // Workload is scaled to 0 (HPA is ignored when replicas=0)
+      const deployment = await mockK8s.getWorkload('test-ns', 'Deployment', 'my-app');
+      expect(deployment.spec.replicas).toBe(0);
 
       const vs = await mockK8s.getVirtualService('test-ns', 'my-app-vs');
       expect(vs.spec.http[0].route[0].destination.host).toContain('scale0');
@@ -329,9 +335,9 @@ describe('Full Scale-Down/Wake-Up Cycle', () => {
       expect(res2.json().status).toBe('waking_up');
 
       expect(store.isScaledDown('test-ns', 'my-app')).toBe(false);
-      const restoredHpa = await mockK8s.getHPA('test-ns', 'my-app');
-      expect(restoredHpa.spec.minReplicas).toBe(2);
-      expect(restoredHpa.spec.maxReplicas).toBe(10);
+      // Workload replicas restored (HPA will take over from here)
+      const restoredDeployment = await mockK8s.getWorkload('test-ns', 'Deployment', 'my-app');
+      expect(restoredDeployment.spec.replicas).toBe(2);
 
       const restoredVs = await mockK8s.getVirtualService('test-ns', 'my-app-vs');
       expect(restoredVs.spec.http[0].route[0].destination.host).toBe('my-app');

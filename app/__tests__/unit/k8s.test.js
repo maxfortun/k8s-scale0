@@ -41,6 +41,22 @@ const mockCustomApi = {
   listNamespacedCustomObject: jest.fn(),
 };
 
+const mockCoordinationApi = {
+  readNamespacedLease: jest.fn(),
+  createNamespacedLease: jest.fn(),
+  replaceNamespacedLease: jest.fn(),
+  deleteNamespacedLease: jest.fn(),
+};
+
+let mockExistsSync = jest.fn();
+
+jest.unstable_mockModule('node:fs', () => ({
+  default: {
+    existsSync: mockExistsSync,
+  },
+  existsSync: mockExistsSync,
+}));
+
 jest.unstable_mockModule('@kubernetes/client-node', () => ({
   default: {
     KubeConfig: jest.fn(() => mockKubeConfig),
@@ -48,6 +64,7 @@ jest.unstable_mockModule('@kubernetes/client-node', () => ({
     AutoscalingV2Api: class {},
     CoreV1Api: class {},
     CustomObjectsApi: class {},
+    CoordinationV1Api: class {},
   },
 }));
 
@@ -60,12 +77,15 @@ describe('K8sClient', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // Default to not in-cluster for most tests
+    mockExistsSync.mockReturnValue(false);
 
     mockKubeConfig.makeApiClient.mockImplementation((ApiClass) => {
       if (ApiClass.name === 'AppsV1Api' || ApiClass === mockAppsApi.constructor) return mockAppsApi;
       if (ApiClass.name === 'AutoscalingV2Api') return mockAutoscalingApi;
       if (ApiClass.name === 'CoreV1Api') return mockCoreApi;
       if (ApiClass.name === 'CustomObjectsApi') return mockCustomApi;
+      if (ApiClass.name === 'CoordinationV1Api') return mockCoordinationApi;
       return mockAppsApi;
     });
 
@@ -84,6 +104,7 @@ describe('K8sClient', () => {
 
   describe('init', () => {
     it('should try in-cluster config first', async () => {
+      mockExistsSync.mockReturnValue(true);
       mockKubeConfig.loadFromCluster.mockImplementation(() => {});
 
       await k8s.init();
@@ -93,9 +114,7 @@ describe('K8sClient', () => {
     });
 
     it('should fall back to default config', async () => {
-      mockKubeConfig.loadFromCluster.mockImplementation(() => {
-        throw new Error('Not in cluster');
-      });
+      mockExistsSync.mockReturnValue(false);
 
       await k8s.init();
 
@@ -106,11 +125,12 @@ describe('K8sClient', () => {
     it('should initialize all API clients', async () => {
       await k8s.init();
 
-      expect(mockKubeConfig.makeApiClient).toHaveBeenCalledTimes(4);
+      expect(mockKubeConfig.makeApiClient).toHaveBeenCalledTimes(5);
       expect(k8s.appsApi).toBeDefined();
       expect(k8s.coreApi).toBeDefined();
       expect(k8s.autoscalingApi).toBeDefined();
       expect(k8s.customApi).toBeDefined();
+      expect(k8s.coordinationApi).toBeDefined();
     });
   });
 
@@ -128,7 +148,8 @@ describe('K8sClient', () => {
 
       const result = await k8s.listServicesWithLabel('scale0/enabled=true');
 
-      expect(mockCoreApi.listServiceForAllNamespaces).toHaveBeenCalledWith({ labelSelector: 'scale0/enabled=true' });
+      // K8s client uses positional params: (allowWatchBookmarks, _continue, fieldSelector, labelSelector)
+      expect(mockCoreApi.listServiceForAllNamespaces).toHaveBeenCalledWith(undefined, undefined, undefined, 'scale0/enabled=true');
       expect(result).toEqual(mockServices);
     });
   });
@@ -145,7 +166,8 @@ describe('K8sClient', () => {
       const result = await k8s.getHPA('ns', 'hpa');
 
       expect(result).toEqual(mockHPA);
-      expect(mockAutoscalingApi.readNamespacedHorizontalPodAutoscaler).toHaveBeenCalledWith({ namespace: 'ns', name: 'hpa' });
+      // K8s client uses positional params: (name, namespace)
+      expect(mockAutoscalingApi.readNamespacedHorizontalPodAutoscaler).toHaveBeenCalledWith('hpa', 'ns');
     });
 
     it('getHPA should return null when not found', async () => {
@@ -167,8 +189,16 @@ describe('K8sClient', () => {
 
       await k8s.patchHPA('ns', 'hpa', { spec: { minReplicas: 0 } });
 
+      // K8s client uses positional params: (name, namespace, body, ...opts, { headers })
       expect(mockAutoscalingApi.patchNamespacedHorizontalPodAutoscaler).toHaveBeenCalledWith(
-        { namespace: 'ns', name: 'hpa', body: { spec: { minReplicas: 0 } } },
+        'hpa',
+        'ns',
+        { spec: { minReplicas: 0 } },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
         { headers: { 'Content-Type': 'application/merge-patch+json' } }
       );
     });
@@ -195,13 +225,14 @@ describe('K8sClient', () => {
       const result = await k8s.getVirtualService('ns', 'vs');
 
       expect(result).toEqual(mockVS);
-      expect(mockCustomApi.getNamespacedCustomObject).toHaveBeenCalledWith({
-        group: 'networking.istio.io',
-        version: 'v1beta1',
-        namespace: 'ns',
-        plural: 'virtualservices',
-        name: 'vs',
-      });
+      // K8s client uses positional params: (group, version, namespace, plural, name)
+      expect(mockCustomApi.getNamespacedCustomObject).toHaveBeenCalledWith(
+        'networking.istio.io',
+        'v1beta1',
+        'ns',
+        'virtualservices',
+        'vs'
+      );
     });
 
     it('getVirtualService should return null when not found', async () => {
@@ -218,14 +249,15 @@ describe('K8sClient', () => {
 
       await k8s.replaceVirtualService('ns', 'vs', vs);
 
-      expect(mockCustomApi.replaceNamespacedCustomObject).toHaveBeenCalledWith({
-        group: 'networking.istio.io',
-        version: 'v1beta1',
-        namespace: 'ns',
-        plural: 'virtualservices',
-        name: 'vs',
-        body: vs,
-      });
+      // K8s client uses positional params: (group, version, namespace, plural, name, body)
+      expect(mockCustomApi.replaceNamespacedCustomObject).toHaveBeenCalledWith(
+        'networking.istio.io',
+        'v1beta1',
+        'ns',
+        'virtualservices',
+        'vs',
+        vs
+      );
     });
 
     it('listVirtualServices should return all VS in namespace', async () => {
@@ -250,13 +282,14 @@ describe('K8sClient', () => {
       const result = await k8s.getHTTPRoute('ns', 'route');
 
       expect(result).toEqual(mockRoute);
-      expect(mockCustomApi.getNamespacedCustomObject).toHaveBeenCalledWith({
-        group: 'gateway.networking.k8s.io',
-        version: 'v1',
-        namespace: 'ns',
-        plural: 'httproutes',
-        name: 'route',
-      });
+      // K8s client uses positional params: (group, version, namespace, plural, name)
+      expect(mockCustomApi.getNamespacedCustomObject).toHaveBeenCalledWith(
+        'gateway.networking.k8s.io',
+        'v1',
+        'ns',
+        'httproutes',
+        'route'
+      );
     });
 
     it('listHTTPRoutes should return empty array when not found', async () => {
@@ -321,8 +354,16 @@ describe('K8sClient', () => {
 
       await k8s.scaleWorkload('ns', 'Deployment', 'deploy', 3);
 
+      // K8s client uses positional params: (name, namespace, body, ...opts, { headers })
       expect(mockAppsApi.patchNamespacedDeployment).toHaveBeenCalledWith(
-        { namespace: 'ns', name: 'deploy', body: { spec: { replicas: 3 } } },
+        'deploy',
+        'ns',
+        { spec: { replicas: 3 } },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
         { headers: { 'Content-Type': 'application/merge-patch+json' } }
       );
     });
@@ -354,7 +395,8 @@ describe('K8sClient', () => {
       const result = await k8s.listPodsWithSelector('ns', 'app=test');
 
       expect(result).toEqual(mockPods);
-      expect(mockCoreApi.listNamespacedPod).toHaveBeenCalledWith({ namespace: 'ns', labelSelector: 'app=test' });
+      // K8s client uses positional params: (namespace, pretty, allowWatchBookmarks, _continue, fieldSelector, labelSelector)
+      expect(mockCoreApi.listNamespacedPod).toHaveBeenCalledWith('ns', undefined, undefined, undefined, undefined, 'app=test');
     });
 
     it('deletePod should delete pod', async () => {
@@ -362,7 +404,8 @@ describe('K8sClient', () => {
 
       await k8s.deletePod('ns', 'pod');
 
-      expect(mockCoreApi.deleteNamespacedPod).toHaveBeenCalledWith({ namespace: 'ns', name: 'pod' });
+      // K8s client uses positional params: (name, namespace)
+      expect(mockCoreApi.deleteNamespacedPod).toHaveBeenCalledWith('pod', 'ns');
     });
 
     it('createPod should create pod', async () => {
@@ -372,7 +415,8 @@ describe('K8sClient', () => {
       const result = await k8s.createPod('ns', mockPod);
 
       expect(result).toEqual(mockPod);
-      expect(mockCoreApi.createNamespacedPod).toHaveBeenCalledWith({ namespace: 'ns', body: mockPod });
+      // K8s client uses positional params: (namespace, body)
+      expect(mockCoreApi.createNamespacedPod).toHaveBeenCalledWith('ns', mockPod);
     });
   });
 
@@ -539,6 +583,155 @@ describe('K8sClient', () => {
       const result = await k8s.findHTTPRoutesForService('ns', 'my-service');
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('Lease operations', () => {
+    beforeEach(async () => {
+      await k8s.init();
+    });
+
+    describe('acquireLease', () => {
+      it('should create new lease when none exists', async () => {
+        mockCoordinationApi.readNamespacedLease.mockRejectedValue({ response: { statusCode: 404 } });
+        mockCoordinationApi.createNamespacedLease.mockResolvedValue({ body: {} });
+
+        const result = await k8s.acquireLease('ns', 'test-service', 30);
+
+        expect(result).toBe(true);
+        expect(mockCoordinationApi.createNamespacedLease).toHaveBeenCalledWith(
+          'ns',
+          expect.objectContaining({
+            metadata: { name: 'scale0-test-service', namespace: 'ns' },
+            spec: expect.objectContaining({
+              holderIdentity: k8s.holderIdentity,
+              leaseDurationSeconds: 30,
+            }),
+          })
+        );
+      });
+
+      it('should renew lease when we already hold it', async () => {
+        const existingLease = {
+          metadata: { name: 'scale0-test-service', namespace: 'ns' },
+          spec: {
+            holderIdentity: k8s.holderIdentity,
+            leaseDurationSeconds: 30,
+            renewTime: new Date().toISOString(),
+          },
+        };
+        mockCoordinationApi.readNamespacedLease.mockResolvedValue({ body: existingLease });
+        mockCoordinationApi.replaceNamespacedLease.mockResolvedValue({ body: {} });
+
+        const result = await k8s.acquireLease('ns', 'test-service', 30);
+
+        expect(result).toBe(true);
+        expect(mockCoordinationApi.replaceNamespacedLease).toHaveBeenCalled();
+      });
+
+      it('should take over expired lease from another holder', async () => {
+        const expiredTime = new Date(Date.now() - 120000).toISOString(); // 2 minutes ago
+        const existingLease = {
+          metadata: { name: 'scale0-test-service', namespace: 'ns' },
+          spec: {
+            holderIdentity: 'other-holder',
+            leaseDurationSeconds: 30,
+            renewTime: expiredTime,
+          },
+        };
+        mockCoordinationApi.readNamespacedLease.mockResolvedValue({ body: existingLease });
+        mockCoordinationApi.replaceNamespacedLease.mockResolvedValue({ body: {} });
+
+        const result = await k8s.acquireLease('ns', 'test-service', 30);
+
+        expect(result).toBe(true);
+        expect(mockCoordinationApi.replaceNamespacedLease).toHaveBeenCalledWith(
+          'scale0-test-service',
+          'ns',
+          expect.objectContaining({
+            spec: expect.objectContaining({
+              holderIdentity: k8s.holderIdentity,
+            }),
+          })
+        );
+      });
+
+      it('should fail to acquire lease held by another (not expired)', async () => {
+        const recentTime = new Date().toISOString();
+        const existingLease = {
+          metadata: { name: 'scale0-test-service', namespace: 'ns' },
+          spec: {
+            holderIdentity: 'other-holder',
+            leaseDurationSeconds: 60,
+            renewTime: recentTime,
+          },
+        };
+        mockCoordinationApi.readNamespacedLease.mockResolvedValue({ body: existingLease });
+
+        const result = await k8s.acquireLease('ns', 'test-service', 30);
+
+        expect(result).toBe(false);
+        expect(mockCoordinationApi.replaceNamespacedLease).not.toHaveBeenCalled();
+      });
+
+      it('should return false on conflict (409)', async () => {
+        mockCoordinationApi.readNamespacedLease.mockRejectedValue({ response: { statusCode: 404 } });
+        mockCoordinationApi.createNamespacedLease.mockRejectedValue({ response: { statusCode: 409 } });
+
+        const result = await k8s.acquireLease('ns', 'test-service', 30);
+
+        expect(result).toBe(false);
+      });
+    });
+
+    describe('releaseLease', () => {
+      it('should delete lease when we hold it', async () => {
+        const existingLease = {
+          spec: { holderIdentity: k8s.holderIdentity },
+        };
+        mockCoordinationApi.readNamespacedLease.mockResolvedValue({ body: existingLease });
+        mockCoordinationApi.deleteNamespacedLease.mockResolvedValue({});
+
+        await k8s.releaseLease('ns', 'test-service');
+
+        expect(mockCoordinationApi.deleteNamespacedLease).toHaveBeenCalledWith('scale0-test-service', 'ns');
+      });
+
+      it('should not delete lease held by another', async () => {
+        const existingLease = {
+          spec: { holderIdentity: 'other-holder' },
+        };
+        mockCoordinationApi.readNamespacedLease.mockResolvedValue({ body: existingLease });
+
+        await k8s.releaseLease('ns', 'test-service');
+
+        expect(mockCoordinationApi.deleteNamespacedLease).not.toHaveBeenCalled();
+      });
+
+      it('should handle 404 gracefully', async () => {
+        mockCoordinationApi.readNamespacedLease.mockRejectedValue({ response: { statusCode: 404 } });
+
+        await expect(k8s.releaseLease('ns', 'test-service')).resolves.not.toThrow();
+      });
+    });
+
+    describe('getLease', () => {
+      it('should return lease when found', async () => {
+        const mockLease = { metadata: { name: 'scale0-test' }, spec: {} };
+        mockCoordinationApi.readNamespacedLease.mockResolvedValue({ body: mockLease });
+
+        const result = await k8s.getLease('ns', 'scale0-test');
+
+        expect(result).toEqual(mockLease);
+      });
+
+      it('should return null when not found', async () => {
+        mockCoordinationApi.readNamespacedLease.mockRejectedValue({ response: { statusCode: 404 } });
+
+        const result = await k8s.getLease('ns', 'scale0-test');
+
+        expect(result).toBeNull();
+      });
     });
   });
 });

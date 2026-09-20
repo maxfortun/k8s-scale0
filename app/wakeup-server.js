@@ -52,6 +52,15 @@ export class WakeupServer {
     return 'text/html';
   }
 
+  isSecureRequest(req) {
+    // Check direct TLS connection
+    if (req.connection?.encrypted || req.socket?.encrypted) return true;
+    // Check proxy headers (e.g., from load balancer/ingress)
+    const proto = req.headers['x-forwarded-proto'];
+    if (proto === 'https') return true;
+    return false;
+  }
+
   addCorsHeaders(req, headers, serviceConfig = null) {
     const origin = req.headers.origin;
 
@@ -209,7 +218,9 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
     // Get per-service CORS config (falls back to controller defaults)
     const serviceConfig = this.getServiceCorsConfig(originalNamespace, originalService);
 
-    if (!this.store.isScaledDown(originalNamespace, originalService)) {
+    // Check scaled-down state (async to support multi-replica coordination)
+    const isScaledDown = await this.store.isScaledDownAsync(originalNamespace, originalService);
+    if (!isScaledDown) {
       console.warn(`Service ${originalNamespace}/${originalService} is not scaled down`);
       this.sendResponse(req, res, 404, 'Not Found', {
         message: 'Service not found in scaled-down state',
@@ -225,11 +236,12 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
     if (!tarpitCookie) {
       console.log(`First request for ${originalNamespace}/${originalService}, setting tarpit cookie`);
       const newCookie = this.tarpit.generate();
+      const isSecure = this.isSecureRequest(req);
       this.sendResponse(req, res, 503, 'Service Unavailable', {
         message: 'Checking client capabilities',
         service: originalService,
         status: 'tarpit_check',
-      }, tarpitDelay, this.tarpit.setCookieHeader(newCookie), serviceConfig);
+      }, tarpitDelay, this.tarpit.setCookieHeader(newCookie, isSecure), serviceConfig);
       return;
     }
 

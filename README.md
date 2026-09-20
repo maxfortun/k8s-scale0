@@ -108,6 +108,16 @@ Environment variables:
 3. **Reflect origin** if `CORS_ALLOW_CREDENTIALS=true` or `scale0/cors-credentials=true`
 4. **Wildcard `*`** - default when nothing configured
 
+## Distributed Locking
+
+When running multiple controller replicas, Kubernetes Leases are used to prevent race conditions during scale-down and wake-up operations:
+
+- **Lease-based coordination**: Each scale-down or wake-up acquires a distributed lease before proceeding
+- **Automatic expiry**: Leases expire after 60 seconds, preventing deadlocks from crashed pods
+- **Per-service locks**: Each service has independent `scale0-scaledown-{name}` and `scale0-wakeup-{name}` leases
+
+The controller requires RBAC permissions for the `coordination.k8s.io/leases` resource.
+
 ## State Persistence
 
 Scaled-down state is persisted to Service annotations (`scale0/scaled-down-state`). This means:

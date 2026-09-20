@@ -89,7 +89,11 @@ export class Tarpit {
     return cookies[this.cookieName];
   }
 
-  setCookieHeader(value) {
-    return `${this.cookieName}=${value}; Path=/; SameSite=None; HttpOnly; Secure; Max-Age=300`;
+  setCookieHeader(value, isSecure = true) {
+    if (isSecure) {
+      return `${this.cookieName}=${value}; Path=/; SameSite=None; HttpOnly; Secure; Max-Age=300`;
+    }
+    // HTTP context: SameSite=Lax works without Secure flag
+    return `${this.cookieName}=${value}; Path=/; SameSite=Lax; HttpOnly; Max-Age=300`;
   }
 }

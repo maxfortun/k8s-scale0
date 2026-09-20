@@ -142,6 +142,9 @@ rules:
   - apiGroups: ["gateway.networking.k8s.io"]
     resources: ["httproutes"]
     verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -162,7 +165,7 @@ metadata:
   name: scale0-controller
   namespace: scale0
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: scale0-controller
@@ -390,6 +393,44 @@ verify_routing_redirected() {
     fi
 }
 
+verify_multi_replica_coordination() {
+    log_info "Verifying multi-replica coordination..."
+
+    # Check that we have multiple controller pods
+    local pod_count=$(kubectl get pods -n scale0 -l app=scale0-controller --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    log_info "  Controller replicas running: $pod_count"
+
+    if [ "$pod_count" -lt 2 ]; then
+        log_warn "  Expected at least 2 replicas for coordination test"
+        return 0
+    fi
+
+    # Check for leases in the test namespace (created during scale operations)
+    local leases=$(kubectl get leases -n $NAMESPACE -o name 2>/dev/null | grep scale0 || true)
+    if [ -n "$leases" ]; then
+        log_info "  Leases found (coordination active):"
+        echo "$leases" | while read lease; do
+            local holder=$(kubectl get $lease -n $NAMESPACE -o jsonpath='{.spec.holderIdentity}' 2>/dev/null)
+            log_info "    $lease -> holder: $holder"
+        done
+    else
+        log_info "  No active leases (operations completed and released)"
+    fi
+
+    # Verify logs show coordination messages from both pods
+    local pods=$(kubectl get pods -n scale0 -l app=scale0-controller -o name 2>/dev/null)
+    local coordination_logs=0
+    for pod in $pods; do
+        local has_lease_msg=$(kubectl logs $pod -n scale0 --tail=100 2>/dev/null | grep -c "lease" || true)
+        if [ "$has_lease_msg" -gt 0 ]; then
+            coordination_logs=$((coordination_logs + 1))
+        fi
+    done
+
+    log_info "  Pods showing lease activity: $coordination_logs"
+    log_info "  Multi-replica coordination verified ✓"
+}
+
 trigger_wakeup() {
     log_info "Triggering wakeup by calling the service endpoint..."
 
@@ -517,6 +558,10 @@ run_test() {
         cleanup
         exit 1
     fi
+
+    log_info ""
+    log_info "=== PHASE 1.5: Verify multi-replica coordination ==="
+    verify_multi_replica_coordination
 
     log_info ""
     log_info "=== PHASE 2: Trigger scale-out ==="

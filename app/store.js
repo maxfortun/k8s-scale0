@@ -36,7 +36,43 @@ export class Store {
   }
 
   isScaledDown(namespace, name) {
-    return this.scaledDownApps.has(this.key(namespace, name));
+    if (this.scaledDownApps.has(this.key(namespace, name))) {
+      return true;
+    }
+    // Check for state that another replica may have saved
+    const state = this.scaledDownApps.get(this.key(namespace, name));
+    return state !== undefined;
+  }
+
+  async isScaledDownAsync(namespace, name) {
+    if (this.scaledDownApps.has(this.key(namespace, name))) {
+      return true;
+    }
+    // Check Service annotation for state saved by another replica
+    if (this.k8s) {
+      try {
+        const state = await this.fetchStateFromAnnotation(namespace, name);
+        if (state) {
+          this.scaledDownApps.set(this.key(namespace, name), state);
+          return true;
+        }
+      } catch (err) {
+        // Ignore - service might not exist or have no annotation
+      }
+    }
+    return false;
+  }
+
+  async fetchStateFromAnnotation(namespace, name) {
+    const service = await this.k8s.getService(namespace, name);
+    if (!service) return null;
+    const stateJson = service.metadata?.annotations?.[STATE_ANNOTATION];
+    if (!stateJson) return null;
+    try {
+      return JSON.parse(stateJson);
+    } catch {
+      return null;
+    }
   }
 
   async saveScaledDownState(namespace, name, state) {
@@ -61,6 +97,20 @@ export class Store {
 
   getScaledDownState(namespace, name) {
     return this.scaledDownApps.get(this.key(namespace, name));
+  }
+
+  async getScaledDownStateAsync(namespace, name) {
+    let state = this.scaledDownApps.get(this.key(namespace, name));
+    if (state) return state;
+
+    // Check Service annotation for state saved by another replica
+    if (this.k8s) {
+      state = await this.fetchStateFromAnnotation(namespace, name);
+      if (state) {
+        this.scaledDownApps.set(this.key(namespace, name), state);
+      }
+    }
+    return state;
   }
 
   async removeScaledDownState(namespace, name) {

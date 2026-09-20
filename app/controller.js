@@ -8,6 +8,7 @@ export class Controller {
     this.scale0ServiceNamespace = process.env.SCALE0_SERVICE_NAMESPACE || 'scale0';
     this.wakingUp = new Set();
     this.scalingDown = new Set();
+    this.loggedDiscoveries = new Set();
   }
 
   async start() {
@@ -43,12 +44,15 @@ export class Controller {
     const labels = svc.metadata.labels || {};
     const annotations = svc.metadata.annotations || {};
 
-    const scaleInAfterSeconds = parseInt(
+    let scaleInAfterSeconds = parseInt(
       labels[`${this.config.labelPrefix}/scale-in-after`] ||
       annotations[`${this.config.labelPrefix}/scale-in-after`] ||
       this.config.scaleInAfterSeconds,
       10
     );
+    if (Number.isNaN(scaleInAfterSeconds) || scaleInAfterSeconds <= 0) {
+      scaleInAfterSeconds = this.config.scaleInAfterSeconds;
+    }
 
     // CORS config from service annotations
     const corsOriginsStr = annotations[`${this.config.labelPrefix}/cors-origins`];
@@ -78,7 +82,11 @@ export class Controller {
       if (discoveredHpa) {
         scaleMode = 'hpa';
         scaleTarget = { name: discoveredHpa.metadata.name };
-        console.log(`Auto-discovered HPA ${namespace}/${scaleTarget.name} for service ${name}`);
+        const discoveryKey = `hpa:${namespace}/${name}`;
+        if (!this.loggedDiscoveries.has(discoveryKey)) {
+          console.log(`Auto-discovered HPA ${namespace}/${scaleTarget.name} for service ${name}`);
+          this.loggedDiscoveries.add(discoveryKey);
+        }
       }
     }
 
@@ -88,7 +96,11 @@ export class Controller {
       if (workload) {
         scaleMode = 'workload';
         scaleTarget = workload;
-        console.log(`Auto-discovered ${workload.kind} ${namespace}/${workload.name} for service ${name} (no HPA)`);
+        const discoveryKey = `workload:${namespace}/${name}`;
+        if (!this.loggedDiscoveries.has(discoveryKey)) {
+          console.log(`Auto-discovered ${workload.kind} ${namespace}/${workload.name} for service ${name} (no HPA)`);
+          this.loggedDiscoveries.add(discoveryKey);
+        }
       }
     }
 
@@ -99,7 +111,11 @@ export class Controller {
       if (pods.length > 0) {
         scaleMode = 'pod';
         scaleTarget = { pods: pods.map(p => ({ name: p.metadata.name, spec: p })) };
-        console.log(`Found ${pods.length} standalone pod(s) for service ${name}`);
+        const discoveryKey = `pod:${namespace}/${name}`;
+        if (!this.loggedDiscoveries.has(discoveryKey)) {
+          console.log(`Found ${pods.length} standalone pod(s) for service ${name}`);
+          this.loggedDiscoveries.add(discoveryKey);
+        }
       }
     }
 
@@ -121,7 +137,11 @@ export class Controller {
       const discoveredVsList = await this.k8s.findVirtualServicesForService(namespace, name);
       if (discoveredVsList.length > 0) {
         vsNames = discoveredVsList.map(vs => vs.metadata.name);
-        console.log(`Auto-discovered ${vsNames.length} VirtualService(s) for service ${name}: ${vsNames.join(', ')}`);
+        const discoveryKey = `vs:${namespace}/${name}`;
+        if (!this.loggedDiscoveries.has(discoveryKey)) {
+          console.log(`Auto-discovered ${vsNames.length} VirtualService(s) for service ${name}: ${vsNames.join(', ')}`);
+          this.loggedDiscoveries.add(discoveryKey);
+        }
       }
     }
 
@@ -131,7 +151,11 @@ export class Controller {
       const discoveredRoutes = await this.k8s.findHTTPRoutesForService(namespace, name);
       if (discoveredRoutes.length > 0) {
         httpRouteNames = discoveredRoutes.map(r => r.metadata.name);
-        console.log(`Auto-discovered ${httpRouteNames.length} HTTPRoute(s) for service ${name}: ${httpRouteNames.join(', ')}`);
+        const discoveryKey = `route:${namespace}/${name}`;
+        if (!this.loggedDiscoveries.has(discoveryKey)) {
+          console.log(`Auto-discovered ${httpRouteNames.length} HTTPRoute(s) for service ${name}: ${httpRouteNames.join(', ')}`);
+          this.loggedDiscoveries.add(discoveryKey);
+        }
       }
     }
 
@@ -167,6 +191,14 @@ export class Controller {
       console.log(`Scale-down already in progress for ${lockKey}, skipping`);
       return;
     }
+
+    // Acquire distributed lease (prevents race with other controller replicas)
+    const leaseAcquired = await this.k8s.acquireLease(namespace, `scaledown-${serviceName}`, 60);
+    if (!leaseAcquired) {
+      console.log(`Could not acquire scale-down lease for ${lockKey}, another instance is handling it`);
+      return;
+    }
+
     this.scalingDown.add(lockKey);
 
     try {
@@ -293,6 +325,7 @@ export class Controller {
       }
     } finally {
       this.scalingDown.delete(`${namespace}/${serviceName}`);
+      await this.k8s.releaseLease(namespace, `scaledown-${serviceName}`);
     }
   }
 
@@ -371,9 +404,17 @@ export class Controller {
       return false;
     }
 
-    const state = this.store.getScaledDownState(namespace, serviceName);
+    // Use async method to check for state saved by another replica
+    const state = await this.store.getScaledDownStateAsync(namespace, serviceName);
     if (!state) {
       console.warn(`No saved state for ${namespace}/${serviceName}`);
+      return false;
+    }
+
+    // Acquire distributed lease (prevents race with other controller replicas)
+    const leaseAcquired = await this.k8s.acquireLease(namespace, `wakeup-${serviceName}`, 60);
+    if (!leaseAcquired) {
+      console.log(`Could not acquire wakeup lease for ${lockKey}, another instance is handling it`);
       return false;
     }
 
@@ -458,6 +499,7 @@ export class Controller {
       return false;
     } finally {
       this.wakingUp.delete(`${namespace}/${serviceName}`);
+      await this.k8s.releaseLease(namespace, `wakeup-${serviceName}`);
     }
   }
 }

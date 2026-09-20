@@ -5,6 +5,7 @@ import { Store } from '../../store.js';
 function createMockK8s() {
   return {
     listServicesWithLabel: jest.fn().mockResolvedValue([]),
+    getService: jest.fn().mockResolvedValue(null),
     getHPA: jest.fn().mockResolvedValue(null),
     patchHPA: jest.fn().mockResolvedValue({}),
     getVirtualService: jest.fn().mockResolvedValue(null),
@@ -19,7 +20,10 @@ function createMockK8s() {
     deletePod: jest.fn().mockResolvedValue({}),
     createPod: jest.fn().mockResolvedValue({}),
     scaleWorkload: jest.fn().mockResolvedValue({}),
+    getWorkload: jest.fn().mockResolvedValue({ spec: { replicas: 1 } }),
     getWorkloadReadyReplicas: jest.fn().mockResolvedValue(0),
+    acquireLease: jest.fn().mockResolvedValue(true),
+    releaseLease: jest.fn().mockResolvedValue(),
   };
 }
 
@@ -258,6 +262,7 @@ describe('Controller', () => {
         };
         mockK8s.findHPAForService.mockResolvedValue(mockHPA);
         mockK8s.getHPA.mockResolvedValue(mockHPA);
+        mockK8s.getWorkload.mockResolvedValue({ spec: { replicas: 2 } });
         mockK8s.findVirtualServicesForService.mockResolvedValue([{ metadata: { name: 'vs', namespace: 'ns' }, spec: { http: [] } }]);
         mockK8s.getVirtualService.mockResolvedValue({ metadata: { name: 'vs', namespace: 'ns' }, spec: { http: [{ route: [] }] } });
 
@@ -266,9 +271,8 @@ describe('Controller', () => {
 
         await controller.processService(svc);
 
-        expect(mockK8s.patchHPA).toHaveBeenCalledWith('ns', 'hpa', {
-          spec: { minReplicas: 0, maxReplicas: 0 },
-        });
+        // Workload is scaled to 0 (HPA ignored when replicas=0)
+        expect(mockK8s.scaleWorkload).toHaveBeenCalledWith('ns', 'Deployment', 'deploy', 0);
         expect(store.isScaledDown('ns', 'svc')).toBe(true);
       });
 
@@ -289,7 +293,7 @@ describe('Controller', () => {
 
   describe('scaleDown', () => {
     describe('HPA mode', () => {
-      it('should scale HPA to 0 and save state', async () => {
+      it('should scale workload to 0 and save state', async () => {
         const mockHPA = {
           spec: {
             minReplicas: 1,
@@ -303,13 +307,13 @@ describe('Controller', () => {
         };
 
         mockK8s.getHPA.mockResolvedValue(mockHPA);
+        mockK8s.getWorkload.mockResolvedValue({ spec: { replicas: 2 } });
         mockK8s.getVirtualService.mockResolvedValue(mockVS);
 
         await controller.scaleDown('ns', 'svc', 'hpa', { name: 'hpa' }, ['vs'], []);
 
-        expect(mockK8s.patchHPA).toHaveBeenCalledWith('ns', 'hpa', {
-          spec: { minReplicas: 0, maxReplicas: 0 },
-        });
+        // Workload is scaled to 0 (HPA ignored when replicas=0)
+        expect(mockK8s.scaleWorkload).toHaveBeenCalledWith('ns', 'Deployment', 'deploy', 0);
 
         const state = store.getScaledDownState('ns', 'svc');
         expect(state.hpa).toEqual({ name: 'hpa', minReplicas: 1, maxReplicas: 5 });
@@ -382,6 +386,7 @@ describe('Controller', () => {
         mockK8s.getHPA.mockResolvedValue({
           spec: { scaleTargetRef: { kind: 'Deployment', name: 'd' }, minReplicas: 1, maxReplicas: 2 },
         });
+        mockK8s.getWorkload.mockResolvedValue({ spec: { replicas: 2 } });
 
         await controller.scaleDown('ns', 'svc', 'hpa', { name: 'hpa' }, ['vs'], []);
 
@@ -405,6 +410,7 @@ describe('Controller', () => {
         mockK8s.getHPA.mockResolvedValue({
           spec: { scaleTargetRef: { kind: 'Deployment', name: 'd' }, minReplicas: 1, maxReplicas: 2 },
         });
+        mockK8s.getWorkload.mockResolvedValue({ spec: { replicas: 2 } });
 
         await controller.scaleDown('ns', 'svc', 'hpa', { name: 'hpa' }, [], ['route']);
 
@@ -423,10 +429,11 @@ describe('Controller', () => {
     });
 
     describe('HPA mode', () => {
-      it('should restore HPA settings', async () => {
+      it('should restore workload replicas', async () => {
         await store.saveScaledDownState('ns', 'svc', {
           scaleMode: 'hpa',
           hpa: { name: 'my-hpa', minReplicas: 2, maxReplicas: 10 },
+          workload: { kind: 'Deployment', name: 'my-deploy', replicas: 2 },
           virtualServices: [{ name: 'vs', spec: { http: [] } }],
         });
         mockK8s.getVirtualService.mockResolvedValue({ metadata: { name: 'vs' }, spec: {} });
@@ -434,9 +441,8 @@ describe('Controller', () => {
         const result = await controller.wakeUp('ns', 'svc');
 
         expect(result).toBe(true);
-        expect(mockK8s.patchHPA).toHaveBeenCalledWith('ns', 'my-hpa', {
-          spec: { minReplicas: 2, maxReplicas: 10 },
-        });
+        // Workload replicas restored (HPA takes over once replicas > 0)
+        expect(mockK8s.scaleWorkload).toHaveBeenCalledWith('ns', 'Deployment', 'my-deploy', 2);
         expect(store.isScaledDown('ns', 'svc')).toBe(false);
         expect(store.getLastActivity('ns', 'svc')).toBeDefined();
       });
@@ -546,9 +552,10 @@ describe('Controller', () => {
       await store.saveScaledDownState('ns', 'svc', {
         scaleMode: 'hpa',
         hpa: { name: 'hpa', minReplicas: 1, maxReplicas: 5 },
+        workload: { kind: 'Deployment', name: 'deploy', replicas: 2 },
         virtualServices: [],
       });
-      mockK8s.patchHPA.mockRejectedValue(new Error('API error'));
+      mockK8s.scaleWorkload.mockRejectedValue(new Error('API error'));
 
       const result = await controller.wakeUp('ns', 'svc');
 

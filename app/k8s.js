@@ -8,6 +8,8 @@ export class K8sClient {
     this.autoscalingApi = null;
     this.coreApi = null;
     this.customApi = null;
+    this.coordinationApi = null;
+    this.holderIdentity = `scale0-${process.env.HOSTNAME || process.pid}-${Date.now()}`;
   }
 
   async init() {
@@ -24,6 +26,84 @@ export class K8sClient {
     this.autoscalingApi = this.kc.makeApiClient(k8s.AutoscalingV2Api);
     this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api);
     this.customApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
+    this.coordinationApi = this.kc.makeApiClient(k8s.CoordinationV1Api);
+  }
+
+  async acquireLease(namespace, name, durationSeconds = 30) {
+    const leaseName = `scale0-${name}`;
+    const now = new Date();
+    const lease = {
+      metadata: {
+        name: leaseName,
+        namespace,
+      },
+      spec: {
+        holderIdentity: this.holderIdentity,
+        leaseDurationSeconds: durationSeconds,
+        acquireTime: now.toISOString(),
+        renewTime: now.toISOString(),
+      },
+    };
+
+    try {
+      const existing = await this.getLease(namespace, leaseName);
+      if (existing) {
+        const renewTime = new Date(existing.spec.renewTime);
+        const expiresAt = new Date(renewTime.getTime() + (existing.spec.leaseDurationSeconds * 1000));
+
+        if (existing.spec.holderIdentity === this.holderIdentity) {
+          // We hold it, renew
+          existing.spec.renewTime = now.toISOString();
+          await this.coordinationApi.replaceNamespacedLease(leaseName, namespace, existing);
+          return true;
+        } else if (now > expiresAt) {
+          // Expired, take it
+          existing.spec.holderIdentity = this.holderIdentity;
+          existing.spec.acquireTime = now.toISOString();
+          existing.spec.renewTime = now.toISOString();
+          existing.spec.leaseDurationSeconds = durationSeconds;
+          await this.coordinationApi.replaceNamespacedLease(leaseName, namespace, existing);
+          return true;
+        }
+        // Held by someone else, not expired
+        return false;
+      }
+      // Create new lease
+      await this.coordinationApi.createNamespacedLease(namespace, lease);
+      return true;
+    } catch (err) {
+      if (err.response?.statusCode === 409) {
+        // Conflict - someone else grabbed it
+        return false;
+      }
+      // Log but don't fail - fall back to local-only locking
+      console.warn(`Lease acquisition failed for ${namespace}/${leaseName}: ${err.message}. Proceeding without distributed lock.`);
+      return true;
+    }
+  }
+
+  async releaseLease(namespace, name) {
+    const leaseName = `scale0-${name}`;
+    try {
+      const existing = await this.getLease(namespace, leaseName);
+      if (existing && existing.spec.holderIdentity === this.holderIdentity) {
+        await this.coordinationApi.deleteNamespacedLease(leaseName, namespace);
+      }
+    } catch (err) {
+      if (err.response?.statusCode !== 404) {
+        console.warn(`Failed to release lease ${namespace}/${leaseName}:`, err.message);
+      }
+    }
+  }
+
+  async getLease(namespace, name) {
+    try {
+      const { body } = await this.coordinationApi.readNamespacedLease(name, namespace);
+      return body;
+    } catch (err) {
+      if (err.response?.statusCode === 404) return null;
+      throw err;
+    }
   }
 
   async listServicesWithLabel(labelSelector) {
@@ -300,7 +380,8 @@ export class K8sClient {
       for (const rule of rules) {
         const backendRefs = rule.backendRefs || [];
         for (const ref of backendRefs) {
-          if (ref.kind === 'Service' && ref.name === serviceName) {
+          // Gateway API spec: backendRef.kind defaults to "Service" when omitted
+          if ((ref.kind === 'Service' || !ref.kind) && ref.name === serviceName) {
             found.push(route);
             break;
           }
