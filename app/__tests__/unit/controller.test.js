@@ -24,7 +24,12 @@ function createMockK8s() {
     getWorkloadReadyReplicas: jest.fn().mockResolvedValue(0),
     acquireLease: jest.fn().mockResolvedValue(true),
     releaseLease: jest.fn().mockResolvedValue(),
+    patchServiceAnnotations: jest.fn().mockResolvedValue({}),
   };
+}
+
+function flushPromises() {
+  return new Promise(resolve => setImmediate(resolve));
 }
 
 const defaultConfig = {
@@ -79,6 +84,17 @@ describe('Controller', () => {
 
     it('should handle stop when not started', async () => {
       await expect(controller.stop()).resolves.not.toThrow();
+    });
+  });
+
+  describe('isWakingUp', () => {
+    it('should return false when not waking up', () => {
+      expect(controller.isWakingUp('ns', 'svc')).toBe(false);
+    });
+
+    it('should return true when waking up', () => {
+      controller.wakingUp.add('ns/svc');
+      expect(controller.isWakingUp('ns', 'svc')).toBe(true);
     });
   });
 

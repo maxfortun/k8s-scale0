@@ -280,39 +280,36 @@ ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refr
       return;
     }
 
-    const timeoutMs = this.config.wakeupTimeoutMs || 30000;
-    let success = false;
-
-    try {
-      success = await Promise.race([
-        this.controller.wakeUp(originalNamespace, originalService),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Wakeup timeout')), timeoutMs)
-        ),
-      ]);
-    } catch (err) {
-      console.error(`Wakeup error for ${originalNamespace}/${originalService}:`, err.message);
-      this.sendResponse(req, res, 504, 'Gateway Timeout', {
-        message: 'Wakeup operation timed out',
-        service: originalService,
-        status: 'wakeup_timeout',
-      }, 0, null, serviceConfig);
-      return;
-    }
-
-    if (success) {
+    // Check if wakeup already in progress (from this or another request)
+    if (this.controller.isWakingUp(originalNamespace, originalService)) {
+      console.log(`Wakeup already in progress for ${originalNamespace}/${originalService}`);
       this.sendResponse(req, res, 503, 'Service Starting', {
         message: `Service ${originalService} is waking up`,
         service: originalService,
         status: 'waking_up',
       }, retryAfter, null, serviceConfig);
-      console.log(`Sent wakeup response for ${originalNamespace}/${originalService}`);
-    } else {
-      this.sendResponse(req, res, 500, 'Internal Server Error', {
-        message: 'Failed to wake up service',
-        service: originalService,
-        status: 'wakeup_failed',
-      }, 0, null, serviceConfig);
+      return;
     }
+
+    // Trigger wakeup asynchronously - don't block the response
+    this.controller.wakeUp(originalNamespace, originalService)
+      .then(success => {
+        if (success) {
+          console.log(`Wakeup completed for ${originalNamespace}/${originalService}`);
+        } else {
+          console.warn(`Wakeup failed for ${originalNamespace}/${originalService}`);
+        }
+      })
+      .catch(err => {
+        console.error(`Wakeup error for ${originalNamespace}/${originalService}:`, err.message);
+      });
+
+    // Return immediately - client will retry via Refresh header
+    this.sendResponse(req, res, 503, 'Service Starting', {
+      message: `Service ${originalService} is waking up`,
+      service: originalService,
+      status: 'waking_up',
+    }, retryAfter, null, serviceConfig);
+    console.log(`Triggered async wakeup for ${originalNamespace}/${originalService}`);
   }
 }

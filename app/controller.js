@@ -11,6 +11,10 @@ export class Controller {
     this.loggedDiscoveries = new Set();
   }
 
+  isWakingUp(namespace, serviceName) {
+    return this.wakingUp.has(`${namespace}/${serviceName}`);
+  }
+
   async start() {
     console.log('Controller starting...');
     await this.reconcile();

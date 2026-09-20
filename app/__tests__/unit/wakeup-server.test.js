@@ -11,6 +11,7 @@ function createMockK8s() {
 function createMockController() {
   return {
     wakeUp: jest.fn().mockResolvedValue(true),
+    isWakingUp: jest.fn().mockReturnValue(false),
   };
 }
 
@@ -270,7 +271,30 @@ describe('WakeupServer', () => {
         expect(res.json().status).toBe('tarpit_invalid');
       });
 
-      it('should wake up service after valid tarpit delay', async () => {
+      it('should trigger async wakeup after valid tarpit delay', async () => {
+        const tarpit = new Tarpit({ tarpitSecret: 'test-secret', tarpitDelaySeconds: 0, tarpitCookieName: 'test_tarpit' });
+        const token = tarpit.generate();
+
+        await new Promise(r => setTimeout(r, 50));
+
+        const res = await makeRequest(server, {
+          headers: {
+            'x-scale0-original-service': 'svc',
+            'x-scale0-original-namespace': 'ns',
+            Cookie: `test_tarpit=${token}`,
+            Accept: 'application/json',
+          },
+        });
+
+        // Returns immediately with 503 - wakeup runs async
+        expect(res.statusCode).toBe(503);
+        expect(res.json().status).toBe('waking_up');
+        expect(mockController.wakeUp).toHaveBeenCalledWith('ns', 'svc');
+      });
+
+      it('should return 503 without re-triggering when wakeup already in progress', async () => {
+        mockController.isWakingUp.mockReturnValue(true);
+
         const tarpit = new Tarpit({ tarpitSecret: 'test-secret', tarpitDelaySeconds: 0, tarpitCookieName: 'test_tarpit' });
         const token = tarpit.generate();
 
@@ -287,11 +311,12 @@ describe('WakeupServer', () => {
 
         expect(res.statusCode).toBe(503);
         expect(res.json().status).toBe('waking_up');
-        expect(mockController.wakeUp).toHaveBeenCalledWith('ns', 'svc');
+        // Should NOT call wakeUp again - it's already in progress
+        expect(mockController.wakeUp).not.toHaveBeenCalled();
       });
 
-      it('should return 500 when wakeUp fails', async () => {
-        mockController.wakeUp.mockResolvedValue(false);
+      it('should handle wakeup errors gracefully (async)', async () => {
+        mockController.wakeUp.mockRejectedValue(new Error('K8s error'));
 
         const tarpit = new Tarpit({ tarpitSecret: 'test-secret', tarpitDelaySeconds: 0, tarpitCookieName: 'test_tarpit' });
         const token = tarpit.generate();
@@ -307,35 +332,9 @@ describe('WakeupServer', () => {
           },
         });
 
-        expect(res.statusCode).toBe(500);
-        expect(res.json().status).toBe('wakeup_failed');
-      });
-
-      it('should return 504 when wakeUp times out', async () => {
-        await server.stop();
-        const shortTimeoutConfig = { ...defaultConfig, wakeupTimeoutMs: 50 };
-        server = new WakeupServer(mockK8s, store, shortTimeoutConfig);
-        mockController = createMockController();
-        mockController.wakeUp.mockImplementation(() => new Promise(resolve => setTimeout(() => resolve(true), 200)));
-        server.setController(mockController);
-        await server.start();
-
-        await store.saveScaledDownState('ns', 'svc', { mode: 'hpa' });
-
-        const tarpit = new Tarpit({ tarpitSecret: 'test-secret', tarpitDelaySeconds: 0, tarpitCookieName: 'test_tarpit' });
-        const token = tarpit.generate();
-
-        const res = await makeRequest(server, {
-          headers: {
-            'x-scale0-original-service': 'svc',
-            'x-scale0-original-namespace': 'ns',
-            Cookie: `test_tarpit=${token}`,
-            Accept: 'application/json',
-          },
-        });
-
-        expect(res.statusCode).toBe(504);
-        expect(res.json().status).toBe('wakeup_timeout');
+        // Still returns 503 immediately - error is logged async
+        expect(res.statusCode).toBe(503);
+        expect(res.json().status).toBe('waking_up');
       });
 
       it('should return 500 when controller not set', async () => {
