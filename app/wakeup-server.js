@@ -18,9 +18,9 @@ export class WakeupServer {
   async start() {
     return new Promise((resolve) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
-      this.server.timeout = 60000;
-      this.server.keepAliveTimeout = 5000;
-      this.server.headersTimeout = 10000;
+      this.server.timeout = this.config.serverTimeoutMs || 60000;
+      this.server.keepAliveTimeout = this.config.serverKeepAliveMs || 5000;
+      this.server.headersTimeout = this.config.serverHeadersTimeoutMs || 10000;
 
       this.server.listen(this.config.wakeupPort, () => {
         console.log(`Wakeup server listening on port ${this.config.wakeupPort}`);

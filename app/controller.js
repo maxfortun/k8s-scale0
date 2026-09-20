@@ -1,15 +1,14 @@
-const LEASE_DURATION_SECONDS = 60;
-const SCALE0_PORT = 8080;
-const MAX_LOGGED_DISCOVERIES = 1000;
-
 export class Controller {
   constructor(k8s, store, config) {
     this.k8s = k8s;
     this.store = store;
     this.config = config;
     this.intervalId = null;
-    this.scale0ServiceName = process.env.SCALE0_SERVICE_NAME || 'scale0';
-    this.scale0ServiceNamespace = process.env.SCALE0_SERVICE_NAMESPACE || 'scale0';
+    this.scale0ServiceName = config.scale0ServiceName || 'scale0';
+    this.scale0ServiceNamespace = config.scale0ServiceNamespace || 'scale0';
+    this.scale0Port = config.scale0Port || 8080;
+    this.leaseDurationSeconds = config.leaseDurationSeconds || 60;
+    this.maxLoggedDiscoveries = config.maxLoggedDiscoveries || 1000;
     this.wakingUp = new Set();
     this.scalingDown = new Set();
     this.loggedDiscoveries = new Set();
@@ -23,7 +22,7 @@ export class Controller {
   trackDiscovery(key) {
     if (this.loggedDiscoveries.has(key)) return false;
     // Prevent unbounded growth - clear when limit reached
-    if (this.loggedDiscoveries.size >= MAX_LOGGED_DISCOVERIES) {
+    if (this.loggedDiscoveries.size >= this.maxLoggedDiscoveries) {
       this.loggedDiscoveries.clear();
     }
     this.loggedDiscoveries.add(key);
@@ -216,7 +215,7 @@ export class Controller {
 
     // Acquire distributed lease (prevents race with other controller replicas)
     const leaseName = `scaledown-${serviceName}`;
-    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, LEASE_DURATION_SECONDS);
+    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, this.leaseDurationSeconds);
     if (!leaseAcquired) {
       console.log(`Could not acquire scale-down lease for ${lockKey}, another instance is handling it`);
       return;
@@ -363,7 +362,7 @@ export class Controller {
         const scale0Route = {
           destination: {
             host: `${this.scale0ServiceName}.${this.scale0ServiceNamespace}.svc.cluster.local`,
-            port: { number: SCALE0_PORT },
+            port: { number: this.scale0Port },
           },
           weight: 100,
           headers: {
@@ -398,7 +397,7 @@ export class Controller {
             kind: 'Service',
             name: this.scale0ServiceName,
             namespace: this.scale0ServiceNamespace,
-            port: SCALE0_PORT,
+            port: this.scale0Port,
             weight: 1,
           }],
           filters: [
@@ -437,7 +436,7 @@ export class Controller {
 
     // Acquire distributed lease (prevents race with other controller replicas)
     const leaseName = `wakeup-${serviceName}`;
-    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, LEASE_DURATION_SECONDS);
+    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, this.leaseDurationSeconds);
     if (!leaseAcquired) {
       console.log(`Could not acquire wakeup lease for ${lockKey}, another instance is handling it`);
       return false;

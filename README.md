@@ -83,19 +83,46 @@ kubectl apply -f k8s/
 
 Environment variables:
 
+### Controller Settings
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CHECK_INTERVAL_MS` | 30000 | How often to check for idle services |
-| `WAKEUP_PORT` | 8080 | HTTP server port |
 | `SCALE_IN_AFTER_SECONDS` | 86400 | Default scale-in timeout if not specified (1 day) |
-| `RETRY_AFTER_SECONDS` | 5 | Seconds to wait before retry (Refresh header) |
 | `LABEL_PREFIX` | scale0 | Label prefix for opt-in |
+| `LEASE_DURATION_SECONDS` | 60 | Duration of distributed locks |
+| `MAX_LOGGED_DISCOVERIES` | 1000 | Max discovery logs before clearing (memory bound) |
+| `SCALE0_SERVICE_NAME` | scale0 | Name of the scale0 controller service |
+| `SCALE0_SERVICE_NAMESPACE` | scale0 | Namespace of the scale0 controller |
+| `SCALE0_PORT` | 8080 | Port used when redirecting traffic to scale0 |
+
+### Wakeup Server Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WAKEUP_PORT` | 8080 | HTTP server port for wakeup requests |
+| `RETRY_AFTER_SECONDS` | 5 | Seconds to wait before retry (Refresh header) |
+| `WAKEUP_TIMEOUT_MS` | 30000 | Timeout for wakeup operations |
+| `SERVER_TIMEOUT_MS` | 60000 | HTTP server request timeout |
+| `SERVER_KEEPALIVE_MS` | 5000 | HTTP server keep-alive timeout |
+| `SERVER_HEADERS_TIMEOUT_MS` | 10000 | HTTP server headers timeout |
+
+### Tarpit Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `TARPIT_SECRET` | (random) | HMAC secret for tarpit cookie signatures |
 | `TARPIT_DELAY_SECONDS` | 3 | Minimum wait time before retry is accepted |
 | `TARPIT_COOKIE_NAME` | scale0_tarpit | Cookie name for tarpit token |
+| `TARPIT_COOKIE_MAX_AGE_SECONDS` | 300 | Cookie Max-Age attribute (5 minutes) |
+| `TARPIT_MAX_VALIDITY_MS` | 300000 | Max time a tarpit token is valid after delay (5 minutes) |
+
+### CORS Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `CORS_ALLOWED_ORIGINS` | (none) | Default allowed CORS origins (comma-separated) |
 | `CORS_ALLOW_CREDENTIALS` | false | Allow credentials when no explicit origins configured |
-| `WAKEUP_TIMEOUT_MS` | 30000 | Timeout for wakeup operations |
 
 **Security notes:**
 - Set `TARPIT_SECRET` explicitly in production. If not set, a random secret is generated, and tarpit cookies become invalid on pod restart.
@@ -113,8 +140,8 @@ Environment variables:
 When running multiple controller replicas, Kubernetes Leases are used to prevent race conditions during scale-down and wake-up operations:
 
 - **Lease-based coordination**: Each scale-down or wake-up acquires a distributed lease before proceeding
-- **Automatic expiry**: Leases expire after 60 seconds, preventing deadlocks from crashed pods
-- **Per-service locks**: Each service has independent `scale0-scaledown-{name}` and `scale0-wakeup-{name}` leases
+- **Automatic expiry**: Leases expire after `LEASE_DURATION_SECONDS` (default 60s), preventing deadlocks from crashed pods
+- **Per-service locks**: Each service has independent `scaledown-{name}` and `wakeup-{name}` leases
 
 The controller requires RBAC permissions for the `coordination.k8s.io/leases` resource.
 
@@ -221,3 +248,7 @@ Deploy manually: `kubectl apply -f test/manifests/`
   - Istio with VirtualServices
   - Gateway API with HTTPRoutes (GKE native)
 - Optional: HPA for auto-scaling (works without HPA too)
+
+## License
+
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may use, modify, and distribute this software for any noncommercial purpose. Commercial use requires a separate license.

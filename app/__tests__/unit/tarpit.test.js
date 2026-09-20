@@ -284,7 +284,7 @@ describe('Tarpit', () => {
       const tarpit = new Tarpit({
         tarpitSecret: 'secret',
         tarpitDelaySeconds: 0,
-        tarpitMaxAgeMs: 100,
+        tarpitMaxValidityMs: 100,
       });
 
       const token = tarpit.generate();

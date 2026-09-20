@@ -1,8 +1,5 @@
 import crypto from 'node:crypto';
 
-const MAX_COOKIE_AGE_MS = 5 * 60 * 1000; // 5 minutes max validity after delay
-const COOKIE_MAX_AGE_SECONDS = 300; // 5 minutes
-
 export class Tarpit {
   constructor(config) {
     const providedSecret = config.tarpitSecret || process.env.TARPIT_SECRET;
@@ -20,7 +17,8 @@ export class Tarpit {
     }
     this.delaySeconds = config.tarpitDelaySeconds ?? 3;
     this.cookieName = config.tarpitCookieName || 'scale0_tarpit';
-    this.maxCookieAgeMs = config.tarpitMaxAgeMs ?? MAX_COOKIE_AGE_MS;
+    this.cookieMaxAgeSeconds = config.tarpitCookieMaxAgeSeconds ?? 300;
+    this.maxCookieAgeMs = config.tarpitMaxValidityMs ?? 300000;
   }
 
   parseCookies(cookieHeader) {
@@ -93,9 +91,9 @@ export class Tarpit {
 
   setCookieHeader(value, isSecure = true) {
     if (isSecure) {
-      return `${this.cookieName}=${value}; Path=/; SameSite=None; HttpOnly; Secure; Max-Age=${COOKIE_MAX_AGE_SECONDS}`;
+      return `${this.cookieName}=${value}; Path=/; SameSite=None; HttpOnly; Secure; Max-Age=${this.cookieMaxAgeSeconds}`;
     }
     // HTTP context: SameSite=Lax works without Secure flag
-    return `${this.cookieName}=${value}; Path=/; SameSite=Lax; HttpOnly; Max-Age=${COOKIE_MAX_AGE_SECONDS}`;
+    return `${this.cookieName}=${value}; Path=/; SameSite=Lax; HttpOnly; Max-Age=${this.cookieMaxAgeSeconds}`;
   }
 }

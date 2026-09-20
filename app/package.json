@@ -22,7 +22,7 @@
     "gateway-api"
   ],
   "author": "",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "dependencies": {
     "@kubernetes/client-node": "^0.20.0"
   },

@@ -21,17 +21,34 @@ function parseOriginAllowlist(value) {
 }
 
 const config = {
+  // Controller settings
   checkIntervalMs: parseIntSafe(process.env.CHECK_INTERVAL_MS, 30000, 'CHECK_INTERVAL_MS'),
-  wakeupPort: parseIntSafe(process.env.WAKEUP_PORT, 8080, 'WAKEUP_PORT'),
   scaleInAfterSeconds: parseIntSafe(process.env.SCALE_IN_AFTER_SECONDS, 86400, 'SCALE_IN_AFTER_SECONDS'),
-  retryAfterSeconds: parseIntSafe(process.env.RETRY_AFTER_SECONDS, 5, 'RETRY_AFTER_SECONDS'),
   labelPrefix: process.env.LABEL_PREFIX || 'scale0',
+  leaseDurationSeconds: parseIntSafe(process.env.LEASE_DURATION_SECONDS, 60, 'LEASE_DURATION_SECONDS'),
+  maxLoggedDiscoveries: parseIntSafe(process.env.MAX_LOGGED_DISCOVERIES, 1000, 'MAX_LOGGED_DISCOVERIES'),
+  scale0ServiceName: process.env.SCALE0_SERVICE_NAME || 'scale0',
+  scale0ServiceNamespace: process.env.SCALE0_SERVICE_NAMESPACE || 'scale0',
+  scale0Port: parseIntSafe(process.env.SCALE0_PORT, 8080, 'SCALE0_PORT'),
+
+  // Wakeup server settings
+  wakeupPort: parseIntSafe(process.env.WAKEUP_PORT, 8080, 'WAKEUP_PORT'),
+  retryAfterSeconds: parseIntSafe(process.env.RETRY_AFTER_SECONDS, 5, 'RETRY_AFTER_SECONDS'),
+  wakeupTimeoutMs: parseIntSafe(process.env.WAKEUP_TIMEOUT_MS, 30000, 'WAKEUP_TIMEOUT_MS'),
+  serverTimeoutMs: parseIntSafe(process.env.SERVER_TIMEOUT_MS, 60000, 'SERVER_TIMEOUT_MS'),
+  serverKeepAliveMs: parseIntSafe(process.env.SERVER_KEEPALIVE_MS, 5000, 'SERVER_KEEPALIVE_MS'),
+  serverHeadersTimeoutMs: parseIntSafe(process.env.SERVER_HEADERS_TIMEOUT_MS, 10000, 'SERVER_HEADERS_TIMEOUT_MS'),
+
+  // Tarpit settings
   tarpitSecret: process.env.TARPIT_SECRET,
   tarpitDelaySeconds: parseIntSafe(process.env.TARPIT_DELAY_SECONDS, 3, 'TARPIT_DELAY_SECONDS'),
   tarpitCookieName: process.env.TARPIT_COOKIE_NAME || 'scale0_tarpit',
+  tarpitCookieMaxAgeSeconds: parseIntSafe(process.env.TARPIT_COOKIE_MAX_AGE_SECONDS, 300, 'TARPIT_COOKIE_MAX_AGE_SECONDS'),
+  tarpitMaxValidityMs: parseIntSafe(process.env.TARPIT_MAX_VALIDITY_MS, 300000, 'TARPIT_MAX_VALIDITY_MS'),
+
+  // CORS settings
   corsAllowedOrigins: parseOriginAllowlist(process.env.CORS_ALLOWED_ORIGINS),
   corsAllowCredentials: process.env.CORS_ALLOW_CREDENTIALS === 'true',
-  wakeupTimeoutMs: parseIntSafe(process.env.WAKEUP_TIMEOUT_MS, 30000, 'WAKEUP_TIMEOUT_MS'),
 };
 
 async function main() {
