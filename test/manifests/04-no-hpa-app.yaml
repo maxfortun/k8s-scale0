@@ -38,9 +38,9 @@ metadata:
   namespace: scale0-test
   labels:
     scale0/enabled: "true"
-    scale0/scale-in-after: "90"
+    scale0/scale-in-after: "120"
   annotations:
-    description: "Workload without HPA - scales deployment directly"
+    description: "Workload without HPA - scales deployment directly (2 min idle)"
 spec:
   selector:
     app: no-hpa

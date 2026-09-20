@@ -144,23 +144,44 @@ Legitimate browsers follow Refresh headers and support cookies. Bots that ignore
 
 ## Testing
 
+### Unit & Integration Tests (Mocked)
+
+Fast tests using mocked K8s APIs (~4 seconds):
+
 ```bash
 cd app
-
-# Run all tests with coverage
-npm test
-
-# Run unit tests only
-npm run test:unit
-
-# Run integration tests only
-npm run test:integration
-
-# Watch mode for development
-npm run test:watch
+npm test              # All tests with coverage
+npm run test:unit     # Unit tests only
+npm run test:watch    # Watch mode
 ```
 
-Test workloads with short timeframes (30-120 seconds) are available in `test/manifests/` for testing in a real cluster.
+### E2E Test (Real Cluster)
+
+Tests against a real Kubernetes cluster with actual scale-in/scale-out cycles:
+
+```bash
+./test/e2e-test.sh
+```
+
+This test:
+1. Deploys test workloads to the cluster
+2. Waits 2 minutes for services to go idle
+3. Verifies HPA is set to 0 (scale-in)
+4. Calls the wakeup endpoint (with tarpit flow)
+5. Verifies HPA is restored (scale-out)
+
+**Requirements:** `kubectl` with cluster access, Istio installed. ~5 minutes runtime.
+
+### Test Manifests
+
+| Manifest | Scale-in | Description |
+|----------|----------|-------------|
+| `02-test-app.yaml` | 2 min | Standard test with HPA |
+| `03-quick-scale-app.yaml` | 1 min | Fast iteration |
+| `04-no-hpa-app.yaml` | 2 min | Direct workload scaling |
+| `05-gateway-api-app.yaml` | 2 min | Gateway API HTTPRoute |
+
+Deploy manually: `kubectl apply -f test/manifests/`
 
 ## Requirements
 

@@ -41,7 +41,7 @@ metadata:
   namespace: scale0-test
   labels:
     scale0/enabled: "true"
-    scale0/scale-in-after: "60"
+    scale0/scale-in-after: "120"
 spec:
   selector:
     app: test-app

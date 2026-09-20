@@ -35,9 +35,9 @@ metadata:
   namespace: scale0-test
   labels:
     scale0/enabled: "true"
-    scale0/scale-in-after: "30"
+    scale0/scale-in-after: "60"
   annotations:
-    description: "Scales down after 30 seconds of inactivity for testing"
+    description: "Scales down after 60 seconds of inactivity for quick testing"
 spec:
   selector:
     app: quick-scale
