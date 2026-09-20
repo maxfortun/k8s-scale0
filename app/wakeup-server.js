@@ -18,6 +18,9 @@ export class WakeupServer {
   async start() {
     return new Promise((resolve) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
+      this.server.timeout = 60000;
+      this.server.keepAliveTimeout = 5000;
+      this.server.headersTimeout = 10000;
 
       this.server.listen(this.config.wakeupPort, () => {
         console.log(`Wakeup server listening on port ${this.config.wakeupPort}`);
@@ -77,6 +80,7 @@ export class WakeupServer {
     headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
     headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept, X-Requested-With';
     headers['Access-Control-Expose-Headers'] = 'Refresh, Retry-After, Set-Cookie';
+    headers['Vary'] = 'Origin';
   }
 
   getServiceCorsConfig(namespace, serviceName) {
@@ -118,19 +122,29 @@ export class WakeupServer {
     }
   }
 
+  escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   renderHtml(statusCode, statusMessage, body, refreshDelay) {
-    const message = body.message || statusMessage;
-    const service = body.service || 'unknown';
+    const message = this.escapeHtml(body.message || statusMessage);
+    const service = this.escapeHtml(body.service || 'unknown');
+    const safeStatusMessage = this.escapeHtml(statusMessage);
     const refreshMeta = refreshDelay > 0 ? `<meta http-equiv="refresh" content="${refreshDelay}">` : '';
 
     if (statusCode === 418) {
       return `<!DOCTYPE html>
 <html>
-<head><title>${statusCode} ${statusMessage}</title>${refreshMeta}</head>
+<head><title>${statusCode} ${safeStatusMessage}</title>${refreshMeta}</head>
 <body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#fef3c7;">
 <div style="text-align:center;padding:2rem;background:white;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);">
 <div style="font-size:4rem;">🫖</div>
-<h1 style="color:#92400e;">${statusMessage}</h1>
+<h1 style="color:#92400e;">${safeStatusMessage}</h1>
 <p style="color:#666;">${message}</p>
 </div>
 </body>
@@ -142,11 +156,11 @@ export class WakeupServer {
 
     return `<!DOCTYPE html>
 <html>
-<head><title>${statusCode} ${statusMessage}</title>${refreshMeta}</head>
+<head><title>${statusCode} ${safeStatusMessage}</title>${refreshMeta}</head>
 <body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5;">
 <div style="text-align:center;padding:2rem;background:white;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);">
 ${spinner}
-<h1 style="color:#333;">${statusMessage}</h1>
+<h1 style="color:#333;">${safeStatusMessage}</h1>
 <p style="color:#666;">${message}</p>
 ${refreshDelay > 0 ? `<p style="color:#999;font-size:0.9rem;">Retrying in ${refreshDelay} seconds...</p>` : ''}
 </div>

@@ -279,5 +279,24 @@ describe('Tarpit', () => {
       expect(result.valid).toBe(false);
       expect(result.reason).toBe('signature');
     });
+
+    it('should reject expired tokens (past max age)', () => {
+      const tarpit = new Tarpit({
+        tarpitSecret: 'secret',
+        tarpitDelaySeconds: 0,
+        tarpitMaxAgeMs: 100,
+      });
+
+      const token = tarpit.generate();
+
+      return new Promise(resolve => {
+        setTimeout(() => {
+          const result = tarpit.verify(token);
+          expect(result.valid).toBe(false);
+          expect(result.reason).toBe('expired');
+          resolve();
+        }, 150);
+      });
+    });
   });
 });

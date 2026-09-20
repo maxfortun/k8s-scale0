@@ -36,7 +36,11 @@ const config = {
 
 async function main() {
   console.log('Starting k8s-scale0 controller...');
-  console.log('Config:', JSON.stringify(config, null, 2));
+  const safeConfig = {
+    ...config,
+    tarpitSecret: config.tarpitSecret ? '[REDACTED]' : '(not set - will use ephemeral)',
+  };
+  console.log('Config:', JSON.stringify(safeConfig, null, 2));
 
   const k8s = new K8sClient();
   await k8s.init();
@@ -58,9 +62,21 @@ async function main() {
 
   const shutdown = async (signal) => {
     console.log(`Received ${signal}, shutting down...`);
-    await controller.stop();
-    await wakeupServer.stop();
-    process.exit(0);
+    const forceExitTimeout = setTimeout(() => {
+      console.error('Graceful shutdown timeout exceeded, forcing exit');
+      process.exit(1);
+    }, 10000);
+
+    try {
+      await controller.stop();
+      await wakeupServer.stop();
+      clearTimeout(forceExitTimeout);
+      process.exit(0);
+    } catch (err) {
+      console.error('Error during shutdown:', err.message);
+      clearTimeout(forceExitTimeout);
+      process.exit(1);
+    }
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));

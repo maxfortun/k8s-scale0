@@ -6,6 +6,8 @@ export class Controller {
     this.intervalId = null;
     this.scale0ServiceName = process.env.SCALE0_SERVICE_NAME || 'scale0';
     this.scale0ServiceNamespace = process.env.SCALE0_SERVICE_NAMESPACE || 'scale0';
+    this.wakingUp = new Set();
+    this.scalingDown = new Set();
   }
 
   async start() {
@@ -160,6 +162,13 @@ export class Controller {
   }
 
   async scaleDown(namespace, serviceName, scaleMode, scaleTarget, vsNames, httpRouteNames, corsConfig = {}) {
+    const lockKey = `${namespace}/${serviceName}`;
+    if (this.scalingDown.has(lockKey)) {
+      console.log(`Scale-down already in progress for ${lockKey}, skipping`);
+      return;
+    }
+    this.scalingDown.add(lockKey);
+
     try {
       // Get current VirtualService states
       const virtualServices = [];
@@ -277,6 +286,8 @@ export class Controller {
       console.log(`Service ${namespace}/${serviceName} (${targetDesc}) scaled down successfully`);
     } catch (err) {
       console.error(`Failed to scale down ${namespace}/${serviceName}:`, err.message);
+    } finally {
+      this.scalingDown.delete(`${namespace}/${serviceName}`);
     }
   }
 
@@ -348,11 +359,20 @@ export class Controller {
   }
 
   async wakeUp(namespace, serviceName) {
+    const lockKey = `${namespace}/${serviceName}`;
+
+    if (this.wakingUp.has(lockKey)) {
+      console.log(`Wakeup already in progress for ${lockKey}`);
+      return false;
+    }
+
     const state = this.store.getScaledDownState(namespace, serviceName);
     if (!state) {
       console.warn(`No saved state for ${namespace}/${serviceName}`);
       return false;
     }
+
+    this.wakingUp.add(lockKey);
 
     try {
       const scaleMode = state.scaleMode || 'hpa'; // backwards compatibility
@@ -429,6 +449,8 @@ export class Controller {
     } catch (err) {
       console.error(`Failed to wake up ${namespace}/${serviceName}:`, err.message);
       return false;
+    } finally {
+      this.wakingUp.delete(`${namespace}/${serviceName}`);
     }
   }
 }

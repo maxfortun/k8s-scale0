@@ -195,7 +195,7 @@ export class K8sClient {
             ([key, value]) => podLabels[key] === value
           );
           if (matches) {
-            return { kind, name: workload.metadata.name, replicas: workload.spec?.replicas || 1 };
+            return { kind, name: workload.metadata.name, replicas: workload.spec?.replicas ?? 1 };
           }
         }
       } catch (err) {

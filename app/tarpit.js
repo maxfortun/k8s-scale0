@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 
+const MAX_COOKIE_AGE_MS = 5 * 60 * 1000; // 5 minutes max validity after delay
+
 export class Tarpit {
   constructor(config) {
     const providedSecret = config.tarpitSecret || process.env.TARPIT_SECRET;
@@ -17,6 +19,7 @@ export class Tarpit {
     }
     this.delaySeconds = config.tarpitDelaySeconds ?? 3;
     this.cookieName = config.tarpitCookieName || 'scale0_tarpit';
+    this.maxCookieAgeMs = config.tarpitMaxAgeMs ?? MAX_COOKIE_AGE_MS;
   }
 
   parseCookies(cookieHeader) {
@@ -68,6 +71,10 @@ export class Tarpit {
       if (now < tarpit.exp) {
         const remainingMs = tarpit.exp - now;
         return { valid: false, reason: 'early', remainingMs };
+      }
+
+      if (now > tarpit.exp + this.maxCookieAgeMs) {
+        return { valid: false, reason: 'expired' };
       }
 
       return { valid: true };

@@ -460,4 +460,23 @@ describe('WakeupServer', () => {
       await expect(server.stop()).resolves.not.toThrow();
     });
   });
+
+  describe('XSS protection', () => {
+    it('should escape HTML in error messages', () => {
+      const html = server.renderHtml(500, '<script>alert(1)</script>', {
+        message: '<img onerror="alert(1)" src=x>',
+        service: '"><script>xss</script>',
+      }, 0);
+
+      expect(html).not.toContain('<script>alert(1)</script>');
+      expect(html).not.toContain('<img onerror');
+      expect(html).not.toContain('"><script>');
+      expect(html).toContain('&lt;script&gt;');
+      expect(html).toContain('&lt;img');
+    });
+
+    it('should escape special characters', () => {
+      expect(server.escapeHtml('<>&"\'')).toBe('&lt;&gt;&amp;&quot;&#39;');
+    });
+  });
 });
