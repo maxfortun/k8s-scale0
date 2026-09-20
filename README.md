@@ -299,4 +299,10 @@ Deploy manually: `kubectl apply -f test/manifests/`
 
 ## License
 
-This project is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may use, modify, and distribute this software for any noncommercial purpose. Commercial use requires a separate license.
+This project is dual-licensed:
+
+- **Noncommercial use**: [PolyForm Noncommercial License 1.0.0](LICENSE.md) — free for personal, educational, research, and nonprofit use.
+- **Commercial use**: Contact the project owner for a commercial license.
+
+**Commercial License Inquiries:**  
+Max — max@maxf.net

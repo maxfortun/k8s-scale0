@@ -1,3 +1,22 @@
+# Dual License
+
+This software is available under two licensing options:
+
+## Option 1: Noncommercial Use
+
+For noncommercial use, this software is licensed under the **PolyForm Noncommercial License 1.0.0** (see below).
+
+## Option 2: Commercial Use
+
+For commercial use, please contact the project owner to obtain a commercial license:
+
+**Max**  
+Email: max@maxf.net
+
+Commercial licenses are available for businesses, SaaS providers, and other commercial applications.
+
+---
+
 # PolyForm Noncommercial License 1.0.0
 
 <https://polyformproject.org/licenses/noncommercial/1.0.0>

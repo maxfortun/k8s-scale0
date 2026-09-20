@@ -22,7 +22,7 @@
     "gateway-api"
   ],
   "author": "",
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "SEE LICENSE IN LICENSE.md",
   "dependencies": {
     "@kubernetes/client-node": "^0.20.0",
     "prom-client": "^15.1.3"
