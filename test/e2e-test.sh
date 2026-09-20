@@ -36,35 +36,134 @@ check_prerequisites() {
 }
 
 deploy_scale0_controller() {
-    log_info "Deploying scale0 controller..."
+    log_info "Deploying scale0 controller to cluster..."
 
-    # Check if scale0 namespace exists
-    if ! kubectl get namespace scale0 &> /dev/null; then
-        kubectl create namespace scale0
-    fi
+    # Create scale0 namespace
+    kubectl create namespace scale0 --dry-run=client -o yaml | kubectl apply -f -
 
-    # Build and deploy controller (assumes local development)
-    cd "$SCRIPT_DIR/../app"
-
-    # For local testing, run controller in background
-    log_info "Starting controller locally..."
-    SCALE0_SERVICE_NAME=scale0 \
-    SCALE0_SERVICE_NAMESPACE=scale0 \
-    SCALE_IN_AFTER_SECONDS=$SCALE_IN_TIMEOUT \
-    CHECK_INTERVAL_MS=10000 \
-    WAKEUP_PORT=8080 \
-    node index.js &
-    CONTROLLER_PID=$!
-
-    echo "$CONTROLLER_PID" > /tmp/scale0-controller.pid
-    sleep 3
-
-    if ! kill -0 $CONTROLLER_PID 2>/dev/null; then
-        log_error "Controller failed to start"
+    # Build Docker image
+    log_info "Building Docker image..."
+    cd "$SCRIPT_DIR/.."
+    docker build -t scale0-controller:e2e-test . || {
+        log_error "Docker build failed"
         exit 1
+    }
+
+    # Load image into cluster
+    if command -v kind &> /dev/null && kind get clusters 2>/dev/null | grep -q .; then
+        log_info "Loading image into kind..."
+        kind load docker-image scale0-controller:e2e-test
+    elif command -v minikube &> /dev/null && minikube status &> /dev/null; then
+        log_info "Loading image into minikube..."
+        minikube image load scale0-controller:e2e-test
+    elif kubectl get nodes -o name | grep -q "desktop-control-plane"; then
+        log_info "Loading image into Docker Desktop Kubernetes..."
+        docker save scale0-controller:e2e-test | docker exec -i desktop-control-plane ctr --namespace k8s.io images import - 2>&1 || true
     fi
 
-    log_info "Controller running (PID: $CONTROLLER_PID)"
+    # Deploy controller
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: scale0-controller
+  namespace: scale0
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: scale0-controller
+rules:
+  - apiGroups: [""]
+    resources: ["services", "pods"]
+    verbs: ["get", "list", "watch", "patch", "create", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["networking.istio.io"]
+    resources: ["virtualservices"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: scale0-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: scale0-controller
+subjects:
+  - kind: ServiceAccount
+    name: scale0-controller
+    namespace: scale0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scale0-controller
+  namespace: scale0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scale0-controller
+  template:
+    metadata:
+      labels:
+        app: scale0-controller
+    spec:
+      serviceAccountName: scale0-controller
+      containers:
+        - name: scale0-controller
+          image: scale0-controller:e2e-test
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: CHECK_INTERVAL_MS
+              value: "10000"
+            - name: SCALE_IN_AFTER_SECONDS
+              value: "$SCALE_IN_TIMEOUT"
+            - name: WAKEUP_PORT
+              value: "8080"
+            - name: TARPIT_SECRET
+              value: "e2e-test-secret"
+            - name: TARPIT_DELAY_SECONDS
+              value: "3"
+            - name: SCALE0_SERVICE_NAME
+              value: "scale0-controller"
+            - name: SCALE0_SERVICE_NAMESPACE
+              value: "scale0"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scale0-controller
+  namespace: scale0
+spec:
+  selector:
+    app: scale0-controller
+  ports:
+    - port: 8080
+      targetPort: 8080
+EOF
+
+    log_info "Waiting for controller to be ready..."
+    kubectl rollout status deployment/scale0-controller -n scale0 --timeout=120s
+
+    log_info "Controller deployed"
 }
 
 deploy_test_workloads() {
@@ -179,13 +278,12 @@ wait_for_scale_in() {
 
     while [ $elapsed -lt $WAIT_FOR_SCALE_IN ]; do
         local replicas=$(get_replica_count)
-        local hpa_min=$(get_hpa_min_replicas)
 
-        echo -ne "\r  Elapsed: ${elapsed}s | Replicas: ${replicas} | HPA min: ${hpa_min}    "
+        echo -ne "\r  Elapsed: ${elapsed}s | Replicas: ${replicas}    "
 
-        if [ "$hpa_min" = "0" ]; then
+        if [ "$replicas" = "0" ]; then
             echo ""
-            log_info "Scale-in detected! HPA minReplicas set to 0"
+            log_info "Scale-in detected! Deployment scaled to 0 replicas"
             return 0
         fi
 
@@ -201,48 +299,40 @@ wait_for_scale_in() {
 trigger_wakeup() {
     log_info "Triggering wakeup by calling the service endpoint..."
 
-    # Call the scale0 wakeup server directly
+    # Port-forward to the scale0-controller service
+    kubectl port-forward -n scale0 svc/scale0-controller 8080:8080 &
+    local pf_pid=$!
+    sleep 2
+
     local wakeup_url="http://localhost:8080"
+    local cookie_jar=$(mktemp)
 
     # First request - should get tarpit cookie
     log_info "Sending initial request (tarpit check)..."
-    local response=$(curl -s -w "\n%{http_code}" \
+    local status=$(curl -s -o /dev/null -w "%{http_code}" -c "$cookie_jar" \
         -H "x-scale0-original-service: e2e-test-app" \
         -H "x-scale0-original-namespace: $NAMESPACE" \
         -H "Accept: application/json" \
-        "$wakeup_url" 2>/dev/null || echo -e "\n000")
-
-    local body=$(echo "$response" | head -n -1)
-    local status=$(echo "$response" | tail -n 1)
+        "$wakeup_url" 2>/dev/null || echo "000")
 
     log_info "Initial response: HTTP $status"
-    echo "$body" | head -c 200
-    echo ""
 
     if [ "$status" = "503" ]; then
-        # Extract cookie and wait for tarpit delay
-        log_info "Got tarpit cookie, waiting for delay..."
+        log_info "Got tarpit cookie, waiting for delay (5s)..."
         sleep 5
 
-        # Second request with cookie
-        local cookie=$(echo "$body" | grep -o '"test_tarpit=[^"]*"' | tr -d '"' || echo "")
-        if [ -z "$cookie" ]; then
-            # Try to extract Set-Cookie from a real curl
-            cookie=$(curl -s -c - \
-                -H "x-scale0-original-service: e2e-test-app" \
-                -H "x-scale0-original-namespace: $NAMESPACE" \
-                "$wakeup_url" 2>/dev/null | grep scale0_tarpit | awk '{print $NF}')
-        fi
-
-        log_info "Sending wakeup request..."
-        curl -s \
+        log_info "Sending wakeup request with cookie..."
+        local body=$(curl -s -b "$cookie_jar" \
             -H "x-scale0-original-service: e2e-test-app" \
             -H "x-scale0-original-namespace: $NAMESPACE" \
-            -H "Cookie: scale0_tarpit=$cookie" \
             -H "Accept: application/json" \
-            "$wakeup_url"
-        echo ""
+            "$wakeup_url" 2>/dev/null || echo "{}")
+
+        log_info "Wakeup response: $body"
     fi
+
+    rm -f "$cookie_jar"
+    kill $pf_pid 2>/dev/null || true
 }
 
 wait_for_scale_out() {
@@ -253,13 +343,12 @@ wait_for_scale_out() {
 
     while [ $elapsed -lt $WAIT_FOR_SCALE_OUT ]; do
         local replicas=$(get_replica_count)
-        local hpa_min=$(get_hpa_min_replicas)
 
-        echo -ne "\r  Elapsed: ${elapsed}s | Replicas: ${replicas} | HPA min: ${hpa_min}    "
+        echo -ne "\r  Elapsed: ${elapsed}s | Replicas: ${replicas}    "
 
-        if [ "$hpa_min" != "0" ] && [ "$hpa_min" != "?" ]; then
+        if [ "$replicas" != "0" ] && [ "$replicas" != "" ]; then
             echo ""
-            log_info "Scale-out detected! HPA minReplicas restored to $hpa_min"
+            log_info "Scale-out detected! Deployment scaled to $replicas replicas"
             return 0
         fi
 
@@ -275,18 +364,11 @@ wait_for_scale_out() {
 cleanup() {
     log_info "Cleaning up..."
 
-    # Stop controller
-    if [ -f /tmp/scale0-controller.pid ]; then
-        local pid=$(cat /tmp/scale0-controller.pid)
-        if kill -0 $pid 2>/dev/null; then
-            kill $pid 2>/dev/null || true
-            log_info "Controller stopped"
-        fi
-        rm -f /tmp/scale0-controller.pid
-    fi
-
-    # Delete test resources
+    # Delete test namespace
     kubectl delete namespace $NAMESPACE --ignore-not-found=true --wait=false
+
+    # Delete scale0 controller
+    kubectl delete namespace scale0 --ignore-not-found=true --wait=false
 
     log_info "Cleanup complete"
 }
@@ -329,14 +411,12 @@ run_test() {
 
     # Verify final state
     local final_replicas=$(get_replica_count)
-    local final_hpa_min=$(get_hpa_min_replicas)
 
     log_info ""
     log_info "=== FINAL STATE ==="
     log_info "Replicas: $final_replicas"
-    log_info "HPA minReplicas: $final_hpa_min"
 
-    if [ "$final_hpa_min" = "2" ]; then
+    if [ "$final_replicas" -ge 1 ] 2>/dev/null; then
         log_info ""
         log_info "=========================================="
         log_info "  E2E TEST PASSED"

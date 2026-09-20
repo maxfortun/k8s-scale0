@@ -1,4 +1,5 @@
 import k8s from '@kubernetes/client-node';
+import fs from 'node:fs';
 
 export class K8sClient {
   constructor() {
@@ -10,10 +11,11 @@ export class K8sClient {
   }
 
   async init() {
-    try {
+    const inClusterTokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token';
+    if (fs.existsSync(inClusterTokenPath)) {
       this.kc.loadFromCluster();
       console.log('Loaded in-cluster config');
-    } catch {
+    } else {
       this.kc.loadFromDefault();
       console.log('Loaded default kubeconfig');
     }
@@ -25,13 +27,13 @@ export class K8sClient {
   }
 
   async listServicesWithLabel(labelSelector) {
-    const { body } = await this.coreApi.listServiceForAllNamespaces({ labelSelector });
+    const { body } = await this.coreApi.listServiceForAllNamespaces(undefined, undefined, undefined, labelSelector);
     return body.items;
   }
 
   async getService(namespace, name) {
     try {
-      const { body } = await this.coreApi.readNamespacedService({ namespace, name });
+      const { body } = await this.coreApi.readNamespacedService(name, namespace);
       return body;
     } catch (err) {
       if (err.response?.statusCode === 404) return null;
@@ -40,19 +42,23 @@ export class K8sClient {
   }
 
   async patchServiceAnnotations(namespace, name, annotations) {
-    const { body } = await this.coreApi.patchNamespacedService({
-      namespace,
+    const { body } = await this.coreApi.patchNamespacedService(
       name,
-      body: { metadata: { annotations } },
-    }, {
-      headers: { 'Content-Type': 'application/merge-patch+json' },
-    });
+      namespace,
+      { metadata: { annotations } },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { headers: { 'Content-Type': 'application/merge-patch+json' } }
+    );
     return body;
   }
 
   async getHPA(namespace, name) {
     try {
-      const { body } = await this.autoscalingApi.readNamespacedHorizontalPodAutoscaler({ namespace, name });
+      const { body } = await this.autoscalingApi.readNamespacedHorizontalPodAutoscaler(name, namespace);
       return body;
     } catch (err) {
       if (err.response?.statusCode === 404) return null;
@@ -61,25 +67,29 @@ export class K8sClient {
   }
 
   async patchHPA(namespace, name, patch) {
-    const { body } = await this.autoscalingApi.patchNamespacedHorizontalPodAutoscaler({
-      namespace,
+    const { body } = await this.autoscalingApi.patchNamespacedHorizontalPodAutoscaler(
       name,
-      body: patch,
-    }, {
-      headers: { 'Content-Type': 'application/merge-patch+json' },
-    });
+      namespace,
+      patch,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { headers: { 'Content-Type': 'application/merge-patch+json' } }
+    );
     return body;
   }
 
   async getVirtualService(namespace, name) {
     try {
-      const { body } = await this.customApi.getNamespacedCustomObject({
-        group: 'networking.istio.io',
-        version: 'v1beta1',
+      const { body } = await this.customApi.getNamespacedCustomObject(
+        'networking.istio.io',
+        'v1beta1',
         namespace,
-        plural: 'virtualservices',
-        name,
-      });
+        'virtualservices',
+        name
+      );
       return body;
     } catch (err) {
       if (err.response?.statusCode === 404) return null;
@@ -88,28 +98,30 @@ export class K8sClient {
   }
 
   async patchVirtualService(namespace, name, patch) {
-    const { body } = await this.customApi.patchNamespacedCustomObject({
-      group: 'networking.istio.io',
-      version: 'v1beta1',
+    const { body } = await this.customApi.patchNamespacedCustomObject(
+      'networking.istio.io',
+      'v1beta1',
       namespace,
-      plural: 'virtualservices',
+      'virtualservices',
       name,
-      body: patch,
-    }, {
-      headers: { 'Content-Type': 'application/merge-patch+json' },
-    });
+      patch,
+      undefined,
+      undefined,
+      undefined,
+      { headers: { 'Content-Type': 'application/merge-patch+json' } }
+    );
     return body;
   }
 
   async replaceVirtualService(namespace, name, vs) {
-    const { body } = await this.customApi.replaceNamespacedCustomObject({
-      group: 'networking.istio.io',
-      version: 'v1beta1',
+    const { body } = await this.customApi.replaceNamespacedCustomObject(
+      'networking.istio.io',
+      'v1beta1',
       namespace,
-      plural: 'virtualservices',
+      'virtualservices',
       name,
-      body: vs,
-    });
+      vs
+    );
     return body;
   }
 
@@ -118,16 +130,16 @@ export class K8sClient {
       let body;
       switch (kind) {
         case 'Deployment':
-          ({ body } = await this.appsApi.readNamespacedDeployment({ namespace, name }));
+          ({ body } = await this.appsApi.readNamespacedDeployment(name, namespace));
           break;
         case 'StatefulSet':
-          ({ body } = await this.appsApi.readNamespacedStatefulSet({ namespace, name }));
+          ({ body } = await this.appsApi.readNamespacedStatefulSet(name, namespace));
           break;
         case 'ReplicaSet':
-          ({ body } = await this.appsApi.readNamespacedReplicaSet({ namespace, name }));
+          ({ body } = await this.appsApi.readNamespacedReplicaSet(name, namespace));
           break;
         case 'ReplicationController':
-          ({ body } = await this.coreApi.readNamespacedReplicationController({ namespace, name }));
+          ({ body } = await this.coreApi.readNamespacedReplicationController(name, namespace));
           break;
         default:
           console.warn(`Unknown workload kind: ${kind}`);
@@ -152,16 +164,16 @@ export class K8sClient {
 
     switch (kind) {
       case 'Deployment':
-        await this.appsApi.patchNamespacedDeployment({ namespace, name, body: patch }, opts);
+        await this.appsApi.patchNamespacedDeployment(name, namespace, patch, undefined, undefined, undefined, undefined, undefined, opts);
         break;
       case 'StatefulSet':
-        await this.appsApi.patchNamespacedStatefulSet({ namespace, name, body: patch }, opts);
+        await this.appsApi.patchNamespacedStatefulSet(name, namespace, patch, undefined, undefined, undefined, undefined, undefined, opts);
         break;
       case 'ReplicaSet':
-        await this.appsApi.patchNamespacedReplicaSet({ namespace, name, body: patch }, opts);
+        await this.appsApi.patchNamespacedReplicaSet(name, namespace, patch, undefined, undefined, undefined, undefined, undefined, opts);
         break;
       case 'ReplicationController':
-        await this.coreApi.patchNamespacedReplicationController({ namespace, name, body: patch }, opts);
+        await this.coreApi.patchNamespacedReplicationController(name, namespace, patch, undefined, undefined, undefined, undefined, undefined, opts);
         break;
       default:
         throw new Error(`Cannot scale workload kind: ${kind}`);
@@ -179,13 +191,13 @@ export class K8sClient {
         let items = [];
         switch (kind) {
           case 'Deployment':
-            items = (await this.appsApi.listNamespacedDeployment({ namespace })).body.items;
+            items = (await this.appsApi.listNamespacedDeployment(namespace)).body.items;
             break;
           case 'StatefulSet':
-            items = (await this.appsApi.listNamespacedStatefulSet({ namespace })).body.items;
+            items = (await this.appsApi.listNamespacedStatefulSet(namespace)).body.items;
             break;
           case 'ReplicaSet':
-            items = (await this.appsApi.listNamespacedReplicaSet({ namespace })).body.items;
+            items = (await this.appsApi.listNamespacedReplicaSet(namespace)).body.items;
             break;
         }
 
@@ -208,7 +220,7 @@ export class K8sClient {
 
   async getPod(namespace, name) {
     try {
-      const { body } = await this.coreApi.readNamespacedPod({ namespace, name });
+      const { body } = await this.coreApi.readNamespacedPod(name, namespace);
       return body;
     } catch (err) {
       if (err.response?.statusCode === 404) return null;
@@ -217,34 +229,34 @@ export class K8sClient {
   }
 
   async listPodsWithSelector(namespace, labelSelector) {
-    const { body } = await this.coreApi.listNamespacedPod({ namespace, labelSelector });
+    const { body } = await this.coreApi.listNamespacedPod(namespace, undefined, undefined, undefined, undefined, labelSelector);
     return body.items;
   }
 
   async deletePod(namespace, name) {
-    await this.coreApi.deleteNamespacedPod({ namespace, name });
+    await this.coreApi.deleteNamespacedPod(name, namespace);
   }
 
   async createPod(namespace, pod) {
-    const { body } = await this.coreApi.createNamespacedPod({ namespace, body: pod });
+    const { body } = await this.coreApi.createNamespacedPod(namespace, pod);
     return body;
   }
 
   async listHPAs(namespace) {
-    const { body } = await this.autoscalingApi.listNamespacedHorizontalPodAutoscaler({ namespace });
+    const { body } = await this.autoscalingApi.listNamespacedHorizontalPodAutoscaler(namespace);
     return body.items;
   }
 
   // Gateway API HTTPRoute methods
   async getHTTPRoute(namespace, name) {
     try {
-      const { body } = await this.customApi.getNamespacedCustomObject({
-        group: 'gateway.networking.k8s.io',
-        version: 'v1',
+      const { body } = await this.customApi.getNamespacedCustomObject(
+        'gateway.networking.k8s.io',
+        'v1',
         namespace,
-        plural: 'httproutes',
-        name,
-      });
+        'httproutes',
+        name
+      );
       return body;
     } catch (err) {
       if (err.response?.statusCode === 404) return null;
@@ -254,12 +266,12 @@ export class K8sClient {
 
   async listHTTPRoutes(namespace) {
     try {
-      const { body } = await this.customApi.listNamespacedCustomObject({
-        group: 'gateway.networking.k8s.io',
-        version: 'v1',
+      const { body } = await this.customApi.listNamespacedCustomObject(
+        'gateway.networking.k8s.io',
+        'v1',
         namespace,
-        plural: 'httproutes',
-      });
+        'httproutes'
+      );
       return body.items || [];
     } catch (err) {
       if (err.response?.statusCode === 404) return [];
@@ -268,14 +280,14 @@ export class K8sClient {
   }
 
   async replaceHTTPRoute(namespace, name, route) {
-    const { body } = await this.customApi.replaceNamespacedCustomObject({
-      group: 'gateway.networking.k8s.io',
-      version: 'v1',
+    const { body } = await this.customApi.replaceNamespacedCustomObject(
+      'gateway.networking.k8s.io',
+      'v1',
       namespace,
-      plural: 'httproutes',
+      'httproutes',
       name,
-      body: route,
-    });
+      route
+    );
     return body;
   }
 
@@ -301,13 +313,18 @@ export class K8sClient {
   }
 
   async listVirtualServices(namespace) {
-    const { body } = await this.customApi.listNamespacedCustomObject({
-      group: 'networking.istio.io',
-      version: 'v1beta1',
-      namespace,
-      plural: 'virtualservices',
-    });
-    return body.items || [];
+    try {
+      const { body } = await this.customApi.listNamespacedCustomObject(
+        'networking.istio.io',
+        'v1beta1',
+        namespace,
+        'virtualservices'
+      );
+      return body.items || [];
+    } catch (err) {
+      if (err.response?.statusCode === 404) return [];
+      throw err;
+    }
   }
 
   async findVirtualServicesForService(namespace, serviceName) {

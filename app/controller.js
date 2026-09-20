@@ -219,6 +219,9 @@ export class Controller {
           return;
         }
         const scaleTargetRef = hpa.spec.scaleTargetRef;
+        const workload = await this.k8s.getWorkload(namespace, scaleTargetRef.kind, scaleTargetRef.name);
+        const currentReplicas = workload?.spec?.replicas ?? 1;
+
         originalState.hpa = {
           name: scaleTarget.name,
           minReplicas: hpa.spec.minReplicas,
@@ -228,13 +231,12 @@ export class Controller {
           kind: scaleTargetRef.kind,
           name: scaleTargetRef.name,
           apiVersion: scaleTargetRef.apiVersion,
+          replicas: currentReplicas,
         };
 
-        // Scale HPA to 0
-        await this.k8s.patchHPA(namespace, scaleTarget.name, {
-          spec: { minReplicas: 0, maxReplicas: 0 },
-        });
-        console.log(`Scaled HPA ${namespace}/${scaleTarget.name} to 0`);
+        // Scale workload to 0 (HPA will be ignored when replicas=0)
+        await this.k8s.scaleWorkload(namespace, scaleTargetRef.kind, scaleTargetRef.name, 0);
+        console.log(`Scaled ${scaleTargetRef.kind} ${namespace}/${scaleTargetRef.name} to 0 (HPA: ${scaleTarget.name})`);
 
       } else if (scaleMode === 'workload') {
         originalState.workload = {
@@ -286,6 +288,9 @@ export class Controller {
       console.log(`Service ${namespace}/${serviceName} (${targetDesc}) scaled down successfully`);
     } catch (err) {
       console.error(`Failed to scale down ${namespace}/${serviceName}:`, err.message);
+      if (err.response?.body) {
+        console.error('Response body:', JSON.stringify(err.response.body));
+      }
     } finally {
       this.scalingDown.delete(`${namespace}/${serviceName}`);
     }
@@ -377,14 +382,16 @@ export class Controller {
     try {
       const scaleMode = state.scaleMode || 'hpa'; // backwards compatibility
 
-      if (scaleMode === 'hpa' && state.hpa) {
-        await this.k8s.patchHPA(namespace, state.hpa.name, {
-          spec: {
-            minReplicas: state.hpa.minReplicas,
-            maxReplicas: state.hpa.maxReplicas,
-          },
-        });
-        console.log(`Restored HPA ${namespace}/${state.hpa.name}`);
+      if (scaleMode === 'hpa' && state.workload) {
+        // Scale workload back up - HPA will take over once replicas > 0
+        const targetReplicas = state.workload.replicas || state.hpa?.minReplicas || 1;
+        await this.k8s.scaleWorkload(
+          namespace,
+          state.workload.kind,
+          state.workload.name,
+          targetReplicas
+        );
+        console.log(`Restored ${state.workload.kind} ${namespace}/${state.workload.name} to ${targetReplicas} replicas (HPA: ${state.hpa?.name})`);
 
       } else if (scaleMode === 'workload' && state.workload) {
         await this.k8s.scaleWorkload(
