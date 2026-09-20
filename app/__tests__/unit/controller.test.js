@@ -85,6 +85,26 @@ describe('Controller', () => {
     it('should handle stop when not started', async () => {
       await expect(controller.stop()).resolves.not.toThrow();
     });
+
+    it('should release active leases on shutdown', async () => {
+      // Simulate active leases
+      controller.activeLeases.set('ns1/scaledown-svc1', true);
+      controller.activeLeases.set('ns2/wakeup-svc2', true);
+
+      await controller.stop();
+
+      expect(mockK8s.releaseLease).toHaveBeenCalledWith('ns1', 'scaledown-svc1');
+      expect(mockK8s.releaseLease).toHaveBeenCalledWith('ns2', 'wakeup-svc2');
+      expect(controller.activeLeases.size).toBe(0);
+    });
+
+    it('should continue shutdown even if lease release fails', async () => {
+      controller.activeLeases.set('ns1/scaledown-svc1', true);
+      mockK8s.releaseLease.mockRejectedValueOnce(new Error('Lease not found'));
+
+      await expect(controller.stop()).resolves.not.toThrow();
+      expect(controller.activeLeases.size).toBe(0);
+    });
   });
 
   describe('isWakingUp', () => {

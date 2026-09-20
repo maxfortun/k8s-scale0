@@ -9,6 +9,7 @@ export class Controller {
     this.wakingUp = new Set();
     this.scalingDown = new Set();
     this.loggedDiscoveries = new Set();
+    this.activeLeases = new Map(); // namespace/leaseName -> true
   }
 
   isWakingUp(namespace, serviceName) {
@@ -27,6 +28,19 @@ export class Controller {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
+
+    // Release any active leases
+    for (const [key] of this.activeLeases) {
+      const [namespace, leaseName] = key.split('/');
+      try {
+        await this.k8s.releaseLease(namespace, leaseName);
+        console.log(`Released lease ${namespace}/${leaseName} during shutdown`);
+      } catch (err) {
+        console.warn(`Failed to release lease ${namespace}/${leaseName}:`, err.message);
+      }
+    }
+    this.activeLeases.clear();
+
     console.log('Controller stopped');
   }
 
@@ -197,11 +211,13 @@ export class Controller {
     }
 
     // Acquire distributed lease (prevents race with other controller replicas)
-    const leaseAcquired = await this.k8s.acquireLease(namespace, `scaledown-${serviceName}`, 60);
+    const leaseName = `scaledown-${serviceName}`;
+    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, 60);
     if (!leaseAcquired) {
       console.log(`Could not acquire scale-down lease for ${lockKey}, another instance is handling it`);
       return;
     }
+    this.activeLeases.set(`${namespace}/${leaseName}`, true);
 
     this.scalingDown.add(lockKey);
 
@@ -331,7 +347,9 @@ export class Controller {
       }
     } finally {
       this.scalingDown.delete(`${namespace}/${serviceName}`);
-      await this.k8s.releaseLease(namespace, `scaledown-${serviceName}`);
+      const leaseName = `scaledown-${serviceName}`;
+      await this.k8s.releaseLease(namespace, leaseName);
+      this.activeLeases.delete(`${namespace}/${leaseName}`);
     }
   }
 
@@ -418,11 +436,13 @@ export class Controller {
     }
 
     // Acquire distributed lease (prevents race with other controller replicas)
-    const leaseAcquired = await this.k8s.acquireLease(namespace, `wakeup-${serviceName}`, 60);
+    const leaseName = `wakeup-${serviceName}`;
+    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, 60);
     if (!leaseAcquired) {
       console.log(`Could not acquire wakeup lease for ${lockKey}, another instance is handling it`);
       return false;
     }
+    this.activeLeases.set(`${namespace}/${leaseName}`, true);
 
     this.wakingUp.add(lockKey);
 
@@ -515,7 +535,9 @@ export class Controller {
       return false;
     } finally {
       this.wakingUp.delete(`${namespace}/${serviceName}`);
-      await this.k8s.releaseLease(namespace, `wakeup-${serviceName}`);
+      const leaseName = `wakeup-${serviceName}`;
+      await this.k8s.releaseLease(namespace, leaseName);
+      this.activeLeases.delete(`${namespace}/${leaseName}`);
     }
   }
 }

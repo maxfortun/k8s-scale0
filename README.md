@@ -152,6 +152,25 @@ The cookie contains:
 
 Legitimate browsers follow Refresh headers and support cookies. Bots that ignore either get blocked.
 
+## Rate Limiting
+
+**The tarpit already provides effective rate limiting:**
+- Each client can trigger at most 1 wakeup per `TARPIT_DELAY_SECONDS` (default 3s)
+- Requests without valid cookies are rejected (503 with new cookie)
+- Early retries are rejected (418)
+- Invalid signatures are rejected (418)
+
+This prevents both accidental spam and simple bot attacks without additional configuration.
+
+**For additional protection** (DDoS, compliance requirements), you'll need mesh-level rate limiting. Istio VirtualService doesn't support rate limiting natively - it requires EnvoyFilter or an external rate limit service. Gateway API implementations vary:
+
+- **Istio**: Use [EnvoyFilter with local_ratelimit](https://istio.io/latest/docs/tasks/policy-enforcement/rate-limit/)
+- **Envoy Gateway**: Use [BackendTrafficPolicy](https://gateway.envoyproxy.io/docs/tasks/traffic/local-rate-limit/)
+- **GKE Gateway**: Use GCPBackendPolicy
+- **Kong**: Use KongPlugin with rate-limiting
+
+These apply to the `scale0-controller` service to limit requests before they reach the tarpit.
+
 ## Testing
 
 ### Unit & Integration Tests (Mocked)
