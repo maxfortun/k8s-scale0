@@ -71,9 +71,9 @@ deploy_test_workloads() {
     log_info "Deploying test workloads..."
 
     # Create test namespace
-    kubectl apply -f "$SCRIPT_DIR/manifests/01-namespace.yaml"
+    kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
 
-    # Deploy test app with 2 minute scale-in
+    # Deploy test app with 2 minute scale-in (using Gateway API HTTPRoute)
     cat <<EOF | kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -137,23 +137,23 @@ spec:
           type: Utilization
           averageUtilization: 70
 ---
-apiVersion: networking.istio.io/v1beta1
-kind: VirtualService
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
 metadata:
-  name: e2e-test-vs
+  name: e2e-test-route
   namespace: $NAMESPACE
 spec:
-  hosts:
+  hostnames:
     - e2e-test.example.com
-  http:
-    - match:
-        - uri:
-            prefix: /
-      route:
-        - destination:
-            host: e2e-test-app
-            port:
-              number: 80
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - kind: Service
+          name: e2e-test-app
+          port: 80
 EOF
 
     log_info "Waiting for deployment to be ready..."
