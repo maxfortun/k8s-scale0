@@ -36,12 +36,7 @@ export class Store {
   }
 
   isScaledDown(namespace, name) {
-    if (this.scaledDownApps.has(this.key(namespace, name))) {
-      return true;
-    }
-    // Check for state that another replica may have saved
-    const state = this.scaledDownApps.get(this.key(namespace, name));
-    return state !== undefined;
+    return this.scaledDownApps.has(this.key(namespace, name));
   }
 
   async isScaledDownAsync(namespace, name) {
@@ -70,7 +65,8 @@ export class Store {
     if (!stateJson) return null;
     try {
       return JSON.parse(stateJson);
-    } catch {
+    } catch (err) {
+      console.warn(`Corrupted state annotation on ${namespace}/${name}:`, err.message);
       return null;
     }
   }

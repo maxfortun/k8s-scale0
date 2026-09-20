@@ -393,8 +393,8 @@ describe('Controller', () => {
         mockK8s.getVirtualService.mockResolvedValue(mockVS);
 
         const pods = [
-          { name: 'pod-1', spec: { metadata: { name: 'pod-1' } } },
-          { name: 'pod-2', spec: { metadata: { name: 'pod-2' } } },
+          { name: 'pod-1', pod: { metadata: { name: 'pod-1' } } },
+          { name: 'pod-2', pod: { metadata: { name: 'pod-2' } } },
         ];
 
         await controller.scaleDown('ns', 'svc', 'pod', { pods }, ['vs'], []);

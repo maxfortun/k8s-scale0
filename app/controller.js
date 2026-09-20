@@ -1,3 +1,7 @@
+const LEASE_DURATION_SECONDS = 60;
+const SCALE0_PORT = 8080;
+const MAX_LOGGED_DISCOVERIES = 1000;
+
 export class Controller {
   constructor(k8s, store, config) {
     this.k8s = k8s;
@@ -14,6 +18,16 @@ export class Controller {
 
   isWakingUp(namespace, serviceName) {
     return this.wakingUp.has(`${namespace}/${serviceName}`);
+  }
+
+  trackDiscovery(key) {
+    if (this.loggedDiscoveries.has(key)) return false;
+    // Prevent unbounded growth - clear when limit reached
+    if (this.loggedDiscoveries.size >= MAX_LOGGED_DISCOVERIES) {
+      this.loggedDiscoveries.clear();
+    }
+    this.loggedDiscoveries.add(key);
+    return true;
   }
 
   async start() {
@@ -100,10 +114,8 @@ export class Controller {
       if (discoveredHpa) {
         scaleMode = 'hpa';
         scaleTarget = { name: discoveredHpa.metadata.name };
-        const discoveryKey = `hpa:${namespace}/${name}`;
-        if (!this.loggedDiscoveries.has(discoveryKey)) {
+        if (this.trackDiscovery(`hpa:${namespace}/${name}`)) {
           console.log(`Auto-discovered HPA ${namespace}/${scaleTarget.name} for service ${name}`);
-          this.loggedDiscoveries.add(discoveryKey);
         }
       }
     }
@@ -114,10 +126,8 @@ export class Controller {
       if (workload) {
         scaleMode = 'workload';
         scaleTarget = workload;
-        const discoveryKey = `workload:${namespace}/${name}`;
-        if (!this.loggedDiscoveries.has(discoveryKey)) {
+        if (this.trackDiscovery(`workload:${namespace}/${name}`)) {
           console.log(`Auto-discovered ${workload.kind} ${namespace}/${workload.name} for service ${name} (no HPA)`);
-          this.loggedDiscoveries.add(discoveryKey);
         }
       }
     }
@@ -128,11 +138,9 @@ export class Controller {
       const pods = await this.k8s.listPodsWithSelector(namespace, selectorStr);
       if (pods.length > 0) {
         scaleMode = 'pod';
-        scaleTarget = { pods: pods.map(p => ({ name: p.metadata.name, spec: p })) };
-        const discoveryKey = `pod:${namespace}/${name}`;
-        if (!this.loggedDiscoveries.has(discoveryKey)) {
+        scaleTarget = { pods: pods.map(p => ({ name: p.metadata.name, pod: p })) };
+        if (this.trackDiscovery(`pod:${namespace}/${name}`)) {
           console.log(`Found ${pods.length} standalone pod(s) for service ${name}`);
-          this.loggedDiscoveries.add(discoveryKey);
         }
       }
     }
@@ -155,10 +163,8 @@ export class Controller {
       const discoveredVsList = await this.k8s.findVirtualServicesForService(namespace, name);
       if (discoveredVsList.length > 0) {
         vsNames = discoveredVsList.map(vs => vs.metadata.name);
-        const discoveryKey = `vs:${namespace}/${name}`;
-        if (!this.loggedDiscoveries.has(discoveryKey)) {
+        if (this.trackDiscovery(`vs:${namespace}/${name}`)) {
           console.log(`Auto-discovered ${vsNames.length} VirtualService(s) for service ${name}: ${vsNames.join(', ')}`);
-          this.loggedDiscoveries.add(discoveryKey);
         }
       }
     }
@@ -169,10 +175,8 @@ export class Controller {
       const discoveredRoutes = await this.k8s.findHTTPRoutesForService(namespace, name);
       if (discoveredRoutes.length > 0) {
         httpRouteNames = discoveredRoutes.map(r => r.metadata.name);
-        const discoveryKey = `route:${namespace}/${name}`;
-        if (!this.loggedDiscoveries.has(discoveryKey)) {
+        if (this.trackDiscovery(`route:${namespace}/${name}`)) {
           console.log(`Auto-discovered ${httpRouteNames.length} HTTPRoute(s) for service ${name}: ${httpRouteNames.join(', ')}`);
-          this.loggedDiscoveries.add(discoveryKey);
         }
       }
     }
@@ -212,7 +216,7 @@ export class Controller {
 
     // Acquire distributed lease (prevents race with other controller replicas)
     const leaseName = `scaledown-${serviceName}`;
-    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, 60);
+    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, LEASE_DURATION_SECONDS);
     if (!leaseAcquired) {
       console.log(`Could not acquire scale-down lease for ${lockKey}, another instance is handling it`);
       return;
@@ -222,40 +226,43 @@ export class Controller {
     this.scalingDown.add(lockKey);
 
     try {
-      // Get current VirtualService states (minimal - only store routes, not full spec)
-      const virtualServices = [];
+      // Fetch VirtualServices once - we'll use them for both state saving and modification
+      const fetchedVirtualServices = [];
       for (const vsName of vsNames) {
         const vs = await this.k8s.getVirtualService(namespace, vsName);
         if (vs) {
-          // Only store the http routes - that's what we modify
-          virtualServices.push({
-            name: vsName,
-            http: vs.spec?.http ? JSON.parse(JSON.stringify(vs.spec.http)) : [],
-          });
+          fetchedVirtualServices.push(vs);
         } else {
           console.warn(`VirtualService ${namespace}/${vsName} not found, skipping`);
         }
       }
 
-      // Get current HTTPRoute states (minimal - only store rules, not full spec)
-      const httpRoutes = [];
+      // Fetch HTTPRoutes once - we'll use them for both state saving and modification
+      const fetchedHTTPRoutes = [];
       for (const routeName of httpRouteNames) {
         const route = await this.k8s.getHTTPRoute(namespace, routeName);
         if (route) {
-          // Only store the rules - that's what we modify
-          httpRoutes.push({
-            name: routeName,
-            rules: route.spec?.rules ? JSON.parse(JSON.stringify(route.spec.rules)) : [],
-          });
+          fetchedHTTPRoutes.push(route);
         } else {
           console.warn(`HTTPRoute ${namespace}/${routeName} not found, skipping`);
         }
       }
 
-      if (virtualServices.length === 0 && httpRoutes.length === 0) {
+      if (fetchedVirtualServices.length === 0 && fetchedHTTPRoutes.length === 0) {
         console.warn(`No routing resources found for service ${namespace}/${serviceName}, skipping scale-down`);
         return;
       }
+
+      // Extract minimal state for persistence (only store what we modify)
+      const virtualServices = fetchedVirtualServices.map(vs => ({
+        name: vs.metadata.name,
+        http: vs.spec?.http ? JSON.parse(JSON.stringify(vs.spec.http)) : [],
+      }));
+
+      const httpRoutes = fetchedHTTPRoutes.map(route => ({
+        name: route.metadata.name,
+        rules: route.spec?.rules ? JSON.parse(JSON.stringify(route.spec.rules)) : [],
+      }));
 
       // Build original state based on scale mode
       const originalState = {
@@ -306,7 +313,7 @@ export class Controller {
       } else if (scaleMode === 'pod') {
         originalState.pods = scaleTarget.pods.map(p => ({
           name: p.name,
-          spec: JSON.parse(JSON.stringify(p.spec)),
+          spec: JSON.parse(JSON.stringify(p.pod)),
         }));
 
         // Delete pods
@@ -316,24 +323,18 @@ export class Controller {
         }
       }
 
-      // Modify all VirtualServices to route to scale0
-      for (const vsState of virtualServices) {
-        const vs = await this.k8s.getVirtualService(namespace, vsState.name);
-        if (vs) {
-          const modifiedVs = this.createScale0VirtualService(vs, serviceName);
-          await this.k8s.replaceVirtualService(namespace, vsState.name, modifiedVs);
-          console.log(`Redirected VirtualService ${namespace}/${vsState.name} to scale0`);
-        }
+      // Modify all VirtualServices to route to scale0 (using already-fetched objects)
+      for (const vs of fetchedVirtualServices) {
+        const modifiedVs = this.createScale0VirtualService(vs, serviceName);
+        await this.k8s.replaceVirtualService(namespace, vs.metadata.name, modifiedVs);
+        console.log(`Redirected VirtualService ${namespace}/${vs.metadata.name} to scale0`);
       }
 
-      // Modify all HTTPRoutes to route to scale0
-      for (const routeState of httpRoutes) {
-        const route = await this.k8s.getHTTPRoute(namespace, routeState.name);
-        if (route) {
-          const modifiedRoute = this.createScale0HTTPRoute(route, serviceName);
-          await this.k8s.replaceHTTPRoute(namespace, routeState.name, modifiedRoute);
-          console.log(`Redirected HTTPRoute ${namespace}/${routeState.name} to scale0`);
-        }
+      // Modify all HTTPRoutes to route to scale0 (using already-fetched objects)
+      for (const route of fetchedHTTPRoutes) {
+        const modifiedRoute = this.createScale0HTTPRoute(route, serviceName);
+        await this.k8s.replaceHTTPRoute(namespace, route.metadata.name, modifiedRoute);
+        console.log(`Redirected HTTPRoute ${namespace}/${route.metadata.name} to scale0`);
       }
 
       // Save state (persists to Service annotation)
@@ -347,7 +348,6 @@ export class Controller {
       }
     } finally {
       this.scalingDown.delete(`${namespace}/${serviceName}`);
-      const leaseName = `scaledown-${serviceName}`;
       await this.k8s.releaseLease(namespace, leaseName);
       this.activeLeases.delete(`${namespace}/${leaseName}`);
     }
@@ -363,7 +363,7 @@ export class Controller {
         const scale0Route = {
           destination: {
             host: `${this.scale0ServiceName}.${this.scale0ServiceNamespace}.svc.cluster.local`,
-            port: { number: 8080 },
+            port: { number: SCALE0_PORT },
           },
           weight: 100,
           headers: {
@@ -398,7 +398,7 @@ export class Controller {
             kind: 'Service',
             name: this.scale0ServiceName,
             namespace: this.scale0ServiceNamespace,
-            port: 8080,
+            port: SCALE0_PORT,
             weight: 1,
           }],
           filters: [
@@ -437,7 +437,7 @@ export class Controller {
 
     // Acquire distributed lease (prevents race with other controller replicas)
     const leaseName = `wakeup-${serviceName}`;
-    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, 60);
+    const leaseAcquired = await this.k8s.acquireLease(namespace, leaseName, LEASE_DURATION_SECONDS);
     if (!leaseAcquired) {
       console.log(`Could not acquire wakeup lease for ${lockKey}, another instance is handling it`);
       return false;
@@ -535,7 +535,6 @@ export class Controller {
       return false;
     } finally {
       this.wakingUp.delete(`${namespace}/${serviceName}`);
-      const leaseName = `wakeup-${serviceName}`;
       await this.k8s.releaseLease(namespace, leaseName);
       this.activeLeases.delete(`${namespace}/${leaseName}`);
     }

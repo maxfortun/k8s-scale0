@@ -30,11 +30,10 @@ export class K8sClient {
   }
 
   async acquireLease(namespace, name, durationSeconds = 30) {
-    const leaseName = `scale0-${name}`;
     const now = new Date();
     const lease = {
       metadata: {
-        name: leaseName,
+        name,
         namespace,
       },
       spec: {
@@ -46,7 +45,7 @@ export class K8sClient {
     };
 
     try {
-      const existing = await this.getLease(namespace, leaseName);
+      const existing = await this.getLease(namespace, name);
       if (existing) {
         const renewTime = new Date(existing.spec.renewTime);
         const expiresAt = new Date(renewTime.getTime() + (existing.spec.leaseDurationSeconds * 1000));
@@ -54,7 +53,7 @@ export class K8sClient {
         if (existing.spec.holderIdentity === this.holderIdentity) {
           // We hold it, renew
           existing.spec.renewTime = now.toISOString();
-          await this.coordinationApi.replaceNamespacedLease(leaseName, namespace, existing);
+          await this.coordinationApi.replaceNamespacedLease(name, namespace, existing);
           return true;
         } else if (now > expiresAt) {
           // Expired, take it
@@ -62,7 +61,7 @@ export class K8sClient {
           existing.spec.acquireTime = now.toISOString();
           existing.spec.renewTime = now.toISOString();
           existing.spec.leaseDurationSeconds = durationSeconds;
-          await this.coordinationApi.replaceNamespacedLease(leaseName, namespace, existing);
+          await this.coordinationApi.replaceNamespacedLease(name, namespace, existing);
           return true;
         }
         // Held by someone else, not expired
@@ -77,21 +76,20 @@ export class K8sClient {
         return false;
       }
       // Log but don't fail - fall back to local-only locking
-      console.warn(`Lease acquisition failed for ${namespace}/${leaseName}: ${err.message}. Proceeding without distributed lock.`);
+      console.warn(`Lease acquisition failed for ${namespace}/${name}: ${err.message}. Proceeding without distributed lock.`);
       return true;
     }
   }
 
   async releaseLease(namespace, name) {
-    const leaseName = `scale0-${name}`;
     try {
-      const existing = await this.getLease(namespace, leaseName);
+      const existing = await this.getLease(namespace, name);
       if (existing && existing.spec.holderIdentity === this.holderIdentity) {
-        await this.coordinationApi.deleteNamespacedLease(leaseName, namespace);
+        await this.coordinationApi.deleteNamespacedLease(name, namespace);
       }
     } catch (err) {
       if (err.response?.statusCode !== 404) {
-        console.warn(`Failed to release lease ${namespace}/${leaseName}:`, err.message);
+        console.warn(`Failed to release lease ${namespace}/${name}:`, err.message);
       }
     }
   }

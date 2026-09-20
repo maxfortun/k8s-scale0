@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 const MAX_COOKIE_AGE_MS = 5 * 60 * 1000; // 5 minutes max validity after delay
+const COOKIE_MAX_AGE_SECONDS = 300; // 5 minutes
 
 export class Tarpit {
   constructor(config) {
@@ -84,6 +85,7 @@ export class Tarpit {
   }
 
   getCookieValue(req) {
+    // Node.js lowercases headers, but some proxies may preserve case
     const cookieHeader = req.headers.cookie || req.headers.Cookie;
     const cookies = this.parseCookies(cookieHeader);
     return cookies[this.cookieName];
@@ -91,9 +93,9 @@ export class Tarpit {
 
   setCookieHeader(value, isSecure = true) {
     if (isSecure) {
-      return `${this.cookieName}=${value}; Path=/; SameSite=None; HttpOnly; Secure; Max-Age=300`;
+      return `${this.cookieName}=${value}; Path=/; SameSite=None; HttpOnly; Secure; Max-Age=${COOKIE_MAX_AGE_SECONDS}`;
     }
     // HTTP context: SameSite=Lax works without Secure flag
-    return `${this.cookieName}=${value}; Path=/; SameSite=Lax; HttpOnly; Max-Age=300`;
+    return `${this.cookieName}=${value}; Path=/; SameSite=Lax; HttpOnly; Max-Age=${COOKIE_MAX_AGE_SECONDS}`;
   }
 }

@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">79.54% </span>
+                <span class="strong">79.35% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>175/220</span>
+                <span class='fraction'>173/218</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">80.97% </span>
+                <span class="strong">80.78% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>166/205</span>
+                <span class='fraction'>164/203</span>
             </div>
         
             
@@ -533,9 +533,7 @@
 <a name='L468'></a><a href='#L468'>468</a>
 <a name='L469'></a><a href='#L469'>469</a>
 <a name='L470'></a><a href='#L470'>470</a>
-<a name='L471'></a><a href='#L471'>471</a>
-<a name='L472'></a><a href='#L472'>472</a>
-<a name='L473'></a><a href='#L473'>473</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L471'></a><a href='#L471'>471</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -567,7 +565,6 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -620,7 +617,6 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
 <span class="cline-any cline-yes">3x</span>
@@ -1039,11 +1035,10 @@ export class K8sClient {
   }
 &nbsp;
   async acquireLease(namespace, name, durationSeconds = <span class="branch-0 cbranch-no" title="branch not covered" >30)</span> {
-    const leaseName = `scale0-${name}`;
     const now = new Date();
     const lease = {
       metadata: {
-        name: leaseName,
+        name,
         namespace,
       },
       spec: {
@@ -1055,7 +1050,7 @@ export class K8sClient {
     };
 &nbsp;
     try {
-      const existing = await this.getLease(namespace, leaseName);
+      const existing = await this.getLease(namespace, name);
       if (existing) {
         const renewTime = new Date(existing.spec.renewTime);
         const expiresAt = new Date(renewTime.getTime() + (existing.spec.leaseDurationSeconds * 1000));
@@ -1063,7 +1058,7 @@ export class K8sClient {
         if (existing.spec.holderIdentity === this.holderIdentity) {
           // We hold it, renew
           existing.spec.renewTime = now.toISOString();
-          await this.coordinationApi.replaceNamespacedLease(leaseName, namespace, existing);
+          await this.coordinationApi.replaceNamespacedLease(name, namespace, existing);
           return true;
         } else if (now &gt; expiresAt) {
           // Expired, take it
@@ -1071,7 +1066,7 @@ export class K8sClient {
           existing.spec.acquireTime = now.toISOString();
           existing.spec.renewTime = now.toISOString();
           existing.spec.leaseDurationSeconds = durationSeconds;
-          await this.coordinationApi.replaceNamespacedLease(leaseName, namespace, existing);
+          await this.coordinationApi.replaceNamespacedLease(name, namespace, existing);
           return true;
         }
         // Held by someone else, not expired
@@ -1086,21 +1081,20 @@ export class K8sClient {
         return false;
       }
       // Log but don't fail - fall back to local-only locking
-<span class="cstat-no" title="statement not covered" >      console.warn(`Lease acquisition failed for ${namespace}/${leaseName}: ${err.message}. Proceeding without distributed lock.`);</span>
+<span class="cstat-no" title="statement not covered" >      console.warn(`Lease acquisition failed for ${namespace}/${name}: ${err.message}. Proceeding without distributed lock.`);</span>
 <span class="cstat-no" title="statement not covered" >      return true;</span>
     }
   }
 &nbsp;
   async releaseLease(namespace, name) {
-    const leaseName = `scale0-${name}`;
     try {
-      const existing = await this.getLease(namespace, leaseName);
+      const existing = await this.getLease(namespace, name);
       if (existing &amp;&amp; existing.spec.holderIdentity === this.holderIdentity) {
-        await this.coordinationApi.deleteNamespacedLease(leaseName, namespace);
+        await this.coordinationApi.deleteNamespacedLease(name, namespace);
       }
     } catch (err) {
 <span class="cstat-no" title="statement not covered" >      if (err.response?.statusCode !== 404) {</span>
-<span class="cstat-no" title="statement not covered" >        console.warn(`Failed to release lease ${namespace}/${leaseName}:`, err.message);</span>
+<span class="cstat-no" title="statement not covered" >        console.warn(`Failed to release lease ${namespace}/${name}:`, err.message);</span>
       }
     }
   }
@@ -1486,7 +1480,7 @@ export class K8sClient {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-09-20T05:47:23.645Z
+                at 2026-09-20T05:55:40.116Z
             </div>
         <script src="prettify.js"></script>
         <script>

@@ -602,7 +602,7 @@ describe('K8sClient', () => {
         expect(mockCoordinationApi.createNamespacedLease).toHaveBeenCalledWith(
           'ns',
           expect.objectContaining({
-            metadata: { name: 'scale0-test-service', namespace: 'ns' },
+            metadata: { name: 'test-service', namespace: 'ns' },
             spec: expect.objectContaining({
               holderIdentity: k8s.holderIdentity,
               leaseDurationSeconds: 30,
@@ -613,7 +613,7 @@ describe('K8sClient', () => {
 
       it('should renew lease when we already hold it', async () => {
         const existingLease = {
-          metadata: { name: 'scale0-test-service', namespace: 'ns' },
+          metadata: { name: 'test-service', namespace: 'ns' },
           spec: {
             holderIdentity: k8s.holderIdentity,
             leaseDurationSeconds: 30,
@@ -632,7 +632,7 @@ describe('K8sClient', () => {
       it('should take over expired lease from another holder', async () => {
         const expiredTime = new Date(Date.now() - 120000).toISOString(); // 2 minutes ago
         const existingLease = {
-          metadata: { name: 'scale0-test-service', namespace: 'ns' },
+          metadata: { name: 'test-service', namespace: 'ns' },
           spec: {
             holderIdentity: 'other-holder',
             leaseDurationSeconds: 30,
@@ -646,7 +646,7 @@ describe('K8sClient', () => {
 
         expect(result).toBe(true);
         expect(mockCoordinationApi.replaceNamespacedLease).toHaveBeenCalledWith(
-          'scale0-test-service',
+          'test-service',
           'ns',
           expect.objectContaining({
             spec: expect.objectContaining({
@@ -659,7 +659,7 @@ describe('K8sClient', () => {
       it('should fail to acquire lease held by another (not expired)', async () => {
         const recentTime = new Date().toISOString();
         const existingLease = {
-          metadata: { name: 'scale0-test-service', namespace: 'ns' },
+          metadata: { name: 'test-service', namespace: 'ns' },
           spec: {
             holderIdentity: 'other-holder',
             leaseDurationSeconds: 60,
@@ -694,7 +694,7 @@ describe('K8sClient', () => {
 
         await k8s.releaseLease('ns', 'test-service');
 
-        expect(mockCoordinationApi.deleteNamespacedLease).toHaveBeenCalledWith('scale0-test-service', 'ns');
+        expect(mockCoordinationApi.deleteNamespacedLease).toHaveBeenCalledWith('test-service', 'ns');
       });
 
       it('should not delete lease held by another', async () => {
